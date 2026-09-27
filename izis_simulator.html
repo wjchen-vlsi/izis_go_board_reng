@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Izis Smart Go Board - Simulator</title>
+<style>
+    body { 
+        font-family: monospace, sans-serif; background-color: #1e1e1e; color: #ecf0f1; 
+        margin: 0; padding: 15px; box-sizing: border-box;
+        height: 100vh; display: flex; flex-direction: column; gap: 15px; overflow: hidden;
+    }
+    
+    #top-section { flex-grow: 1; display: flex; gap: 15px; min-height: 0; justify-content: center; }
+
+    .side-panel { display: flex; flex-direction: column; gap: 10px; width: 180px; flex-shrink: 0; overflow-y: auto; padding-right: 5px; }
+    .control-box { background: #333; padding: 12px; border-radius: 8px; font-size: 13px; }
+    .control-box select, .control-box input[type="text"] { width: 100%; margin-top: 5px; background: #222; color: #fff; border: 1px solid #555; padding: 5px; box-sizing: border-box; }
+    .quick-btn { background: #444; color: #fff; border: 1px solid #666; padding: 5px 10px; cursor: pointer; border-radius: 3px; font-size: 12px; transition: 0.1s; }
+    .quick-btn:hover { background: #555; }
+
+    .mode-btn { background: #222; border: 1px solid #555; color: #ccc; padding: 8px; text-align: left; cursor: pointer; border-radius: 4px; margin-top: 5px; width: 100%; font-size: 12px; }
+    .mode-btn.active { background: #2ecc71; color: #000; font-weight: bold; border-color: #27ae60; }
+
+    #izis-hardware-wrapper { flex-grow: 1; display: flex; justify-content: center; align-items: center; position: relative; }
+
+    #izis-hardware {
+        background-color: #dcba7a; 
+        border-radius: 10px; box-shadow: 0 15px 30px rgba(0,0,0,0.5); border: 2px solid #b89151;
+        position: relative; display: flex; align-items: center; justify-content: center;
+        padding: 50px 40px; 
+        transform-origin: center center;
+    }
+
+    #indicator-black, #indicator-white { position: absolute; width: 8px; height: 8px; border-radius: 50%; background-color: #555; left: 50%; transform: translateX(-50%); transition: 0.2s; }
+    #indicator-black { top: 12px; } #indicator-white { bottom: 12px; }
+    .led-on-green { background-color: #0f0 !important; box-shadow: 0 0 12px #0f0; }
+    .led-on-white { background-color: #fff !important; box-shadow: 0 0 12px #fff; }
+    .coord-label { position: absolute; color: #555; font-size: 13px; font-family: Arial, sans-serif; font-weight: bold; }
+    
+    #board-grid { position: relative; width: 608px; height: 608px; display: grid; grid-template-columns: repeat(19, 32px); grid-template-rows: repeat(19, 32px); }
+    .grid-cell { position: relative; width: 32px; height: 32px; cursor: pointer; }
+    .grid-line-h { position: absolute; top: 15px; left: 0; right: 0; height: 1px; background: #222; pointer-events: none; }
+    .grid-line-v { position: absolute; left: 15px; top: 0; bottom: 0; width: 1px; background: #222; pointer-events: none; }
+    .edge-top .grid-line-v { top: 15px; } .edge-bottom .grid-line-v { bottom: 15px; } .edge-left .grid-line-h { left: 15px; } .edge-right .grid-line-h { right: 15px; }
+    .hoshi { position: absolute; width: 6px; height: 6px; background: #111; border-radius: 50%; top: 13px; left: 13px; pointer-events: none; }
+
+    .intersection { position: absolute; width: 30px; height: 30px; top: 1px; left: 1px; display: flex; justify-content: center; align-items: center; pointer-events: none; }
+    .stone { width: 100%; height: 100%; border-radius: 50%; transition: 0.2s; }
+    .stone-black { background-color: #111; box-shadow: inset -5px -5px 10px rgba(255,255,255,0.2), 2px 2px 5px rgba(0,0,0,0.5); pointer-events: auto; }
+    .stone-white { background-color: #f8f8f8; box-shadow: inset -5px -5px 10px rgba(0,0,0,0.1), 2px 2px 5px rgba(0,0,0,0.5); pointer-events: auto; }
+
+    .led { position: absolute; width: 12px; height: 12px; border-radius: 50%; z-index: 20; display: none; }
+    .led-glow { display: block; background-color: var(--led-color); box-shadow: 0 0 15px 8px var(--led-color); }
+
+    .pt-index { position: absolute; font-size: 10px; font-family: Arial, sans-serif; font-weight: bold; z-index: 30; pointer-events: none; display: none; }
+    #board-grid.show-indices .pt-index { display: block; }
+    .pt-index { color: #333; text-shadow: 0px 0px 3px rgba(255,255,255,0.8); }
+    .stone-black ~ .pt-index { color: #eee; text-shadow: none; }
+    .stone-white ~ .pt-index { color: #111; text-shadow: none; }
+
+    .inactive-area { opacity: 0.3; pointer-events: none; }
+
+    #hardware-panel { width: 100px; background-color: #111; border-radius: 10px; display: flex; flex-direction: column; justify-content: space-between; align-items: center; padding: 25px 0; margin-left: 10px; flex-shrink: 0; }
+    .hw-button { width: 50px; height: 50px; border-radius: 50%; background: radial-gradient(circle at 30% 30%, #e0e0e0, #888); border: 2px solid #555; cursor: pointer; }
+    .hw-button:active { transform: translateY(2px); }
+    #lcd-screen { width: 80px; height: 120px; background-color: #ecf0f1; border: 3px solid #000; font-size: 10px; padding: 4px; color: #111; text-align: center; }
+
+    #bottom-section { height: 32vh; min-height: 200px; display: flex; flex-direction: column; transition: height 0.3s ease, min-height 0.3s ease; }
+    #bottom-section.collapsed { height: 35px !important; min-height: 35px !important; overflow: hidden; }
+    #tty-console { background-color: #111; border-radius: 10px; display: flex; flex-direction: column; height: 100%; border: 1px solid #444; }
+    
+    .tty-header { padding: 8px 12px; background: #333; font-weight: bold; font-size: 13px; display: flex; justify-content: space-between; align-items: center; border-radius: 10px 10px 0 0; }
+    .collapse-btn { background: #555; color: #fff; border: 1px solid #777; border-radius: 4px; padding: 2px 10px; cursor: pointer; font-size: 12px; }
+    .collapse-btn:hover { background: #666; }
+
+    #tty-log { flex-grow: 1; padding: 10px; overflow-y: auto; font-family: 'Courier New', Courier, monospace; font-size: 13px; white-space: pre-wrap; border-bottom: 1px solid #444; }
+    .log-tx { color: #2ecc71; } .log-rx { color: #f39c12; }
+    .log-help { color: #5bc0de; background: #1a2a3a; padding: 8px; border-left: 4px solid #5bc0de; margin: 5px 0; border-radius: 0 4px 4px 0; font-family: monospace; line-height: 1.4; white-space: pre; }
+    .log-warn { color: #f1c40f; background: #332b00; padding: 6px; border-left: 4px solid #f1c40f; margin: 3px 0; border-radius: 0 4px 4px 0; font-size: 11px; }
+    .sda-collapsed { color: #888; cursor: pointer; text-decoration: underline; background: #222; padding: 0 4px; border-radius: 3px; font-size: 11px; }
+    .sda-collapsed:hover { color: #ccc; }
+    .sda-full { word-break: break-all; color: #2ecc71; cursor: pointer; }
+    
+    #tty-controls { padding: 8px; background: #222; display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
+    #tty-input-area { display: flex; padding: 10px; gap: 10px; }
+    #tty-input { flex-grow: 1; padding: 8px; font-family: monospace; font-size: 14px; background: #000; color: #0f0; border: 1px solid #555; }
+</style>
+</head>
+<body>
+
+<div id="top-section">
+    <div class="side-panel">
+        <div class="control-box">
+            <label>Placement Mode (Left Click):</label>
+            <button class="mode-btn active" id="btn-mode-alt" onclick="setMode('alt')">Alt. (Next: Black)</button>
+            <button class="mode-btn" id="btn-mode-blk" onclick="setMode('blk')">Place Black Stones</button>
+            <button class="mode-btn" id="btn-mode-wht" onclick="setMode('wht')">Place White Stones</button>
+            <hr style="border-color:#555; margin:10px 0;">
+            <button class="quick-btn" style="width:100%; background:#c0392b; border-color:#e74c3c;" onclick="clearAllStones()">🗑️ Clear All Stones</button>
+        </div>
+        <div class="control-box">
+            <label>Show Coordinates:</label>
+            <select id="coord-select" onchange="drawCoordinates()" style="margin-bottom:10px;">
+                <option value="none">No Border Coordinates</option>
+                <option value="intl">International Coordinates (A-T, 1-19)</option>
+                <option value="sgf">SGF Coordinates (a-s, a-s)</option>
+            </select>
+            <label style="font-size: 12px; cursor:pointer; display:flex; align-items:center; gap:5px;">
+                <input type="checkbox" id="cb-index" onchange="toggleIndices()" style="width:auto; margin:0;">
+                SDA Position Index
+            </label>
+        </div>
+        <div class="control-box">
+            <label>WebSocket Bridge:</label>
+            <input type="text" id="ws-url" value="ws://127.0.0.1:8080">
+            <button class="quick-btn" style="width:100%; margin-top:5px;" onclick="connectWS()">Connect</button>
+            <div id="ws-status" style="color: #e74c3c; margin-top: 5px; text-align:center;">Offline</div>
+        </div>
+    </div>
+
+    <div id="izis-hardware-wrapper">
+        <div id="izis-hardware">
+            <div id="indicator-black" title="Top Green Indicator"></div>
+            <div id="indicator-white" title="Bottom White Indicator"></div>
+            <div id="coord-container" style="position: absolute; width: 100%; height: 100%; pointer-events: none;"></div>
+            <div id="board-grid"></div>
+        </div>
+    </div>
+
+    <div id="hardware-panel">
+        <button class="hw-button" id="btn-top" title="Top Clock Button (~BKY# / ~BTK#)"></button>
+        <div id="lcd-screen">
+            <div>IZIS Simulator</div>
+            <hr>
+            <div id="lcd-text">Hello World</div>
+        </div>
+        <button class="hw-button" id="btn-bottom" title="Bottom Clock Button (~WKY# / ~WTK#)"></button>
+    </div>
+</div>
+
+<div id="bottom-section">
+    <div id="tty-console">
+        <div class="tty-header">
+            <span>Console</span>
+            <button class="collapse-btn" onclick="toggleTTY()">Collapse / Expand ▼</button>
+        </div>
+        <div id="tty-log"></div>
+        <div id="tty-controls">
+            <button class="quick-btn" style="background:#0984e3; font-weight:bold;" onclick="printHelp()">ℹ️ Command Help</button>
+            <button class="quick-btn" onclick="insertCmd('~STA#'); sendInputCmd();">STA</button>
+            <button class="quick-btn" onclick="insertCmd('~RGC#'); sendInputCmd();">RGC</button>
+            
+            <select id="cmd-template" style="background:#222; color:#fff; border:1px solid #555; border-radius:3px; padding:4px;">
+                <option value="">-- Command Templates --</option>
+                <optgroup label="Board Boundary Setup">
+                    <option value="~BOD19#">BOD19 (19x19)</option>
+                    <option value="~BOD13#">BOD13 (13x13)</option>
+                    <option value="~BOD09#">BOD09 (9x9)</option>
+                </optgroup>
+                <optgroup label="System & Sensor Setup">
+                    <option value="~CTS1#">CTS1 (Enable Auto-Report)</option>
+                    <option value="~CTS0#">CTS0 (Disable Auto-Report)</option>
+                    <option value="~GVE#">GVE (Get HW Version)</option>
+                    <option value="~ADJ#">ADJ (Calibrate Sensors)</option>
+                    <option value="~GSV#">GSV (Get Separator Setting)</option>
+                    <option value="~SEP32#">SEP32 (Set Separator 0.32)</option>
+                    <option value="~SEP15#">SEP15 (Set Separator 0.15)</option>
+                </optgroup>
+                <optgroup label="Hardware Indicators">
+                    <option value="~LED11#">LED11 (Top Green ON)</option>
+                    <option value="~LED21#">LED21 (Bottom White ON)</option>
+                    <option value="~LED10#">LED10 (Both Indicators OFF)</option>
+                </optgroup>
+                <optgroup label="Advanced Lighting Commands">
+                    <option value="~RGF#">RGF (Clear LEDs, Preserve Boundary)</option>
+                    <option value="~FLL#">FLL (Fill Dim White)</option>
+                    <option value="~TLO181,r000g255b000,1#">TLO (Single LED + Sync Top Indicator)</option>
+                    <option value="~HOTA001r255g000b000B019r000g255b000C343r000g000b255D361r255g255b255N4#">HOT (Batch 4 LEDs Corners)</option>
+                </optgroup>
+                <optgroup label="Graphics & Audio">
+                    <option value="~RLO#">RLO (Draw OK Graphic)</option>
+                    <option value="~RLT#">RLT (Draw Tick/V Graphic)</option>
+                    <option value="~RLW#">RLW (Draw Cross/X Graphic)</option>
+                    <option value="~AWO#">AWO (Beep Audio)</option>
+                </optgroup>
+            </select>
+            <button class="quick-btn" onclick="applyTemplate()">Add to Input</button>
+
+            <div style="display: flex; align-items: center; gap: 5px; margin-left: auto;">
+                <label style="font-size:12px;">Pos:</label>
+                <input type="number" id="led-pos" value="1" min="1" max="361" style="width:45px; background:#222; color:#fff; border:1px solid #555; text-align:center; font-family:monospace;">
+                <input type="color" id="led-color" value="#00ff00" style="padding:0; border:none; width:25px; height:25px;">
+                <button class="quick-btn" onclick="sendColorCmd()">💡 Send SHP</button>
+            </div>
+        </div>
+        <div id="tty-input-area">
+            <input type="text" id="tty-input" placeholder="Enter command or press Tab to auto-complete" autocomplete="off">
+            <button class="quick-btn" style="font-size: 14px; padding: 0 20px;" onclick="sendInputCmd()">Send</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    const TOTAL_POINTS = 361;
+    let boardState = new Array(TOTAL_POINTS).fill(0); 
+    let autoReport = false;
+    let ws = null; 
+    let lastCmdTime = 0, lastCmdPrefix = '';
+    let sepSetting = '0.32'; 
+    let currentBoardSize = 19; 
+
+    let placeMode = 'alt', nextStone = 1;     
+
+    function logicalToPhysical(logIdx) {
+        if (currentBoardSize === 19) return logIdx;
+        const offset = Math.floor((19 - currentBoardSize) / 2); 
+        const r = Math.floor(logIdx / currentBoardSize);
+        const c = logIdx % currentBoardSize;
+        return (r + offset) * 19 + (c + offset);
+    }
+
+    function generateSDA() {
+        let sdaStr = '';
+        const limit = currentBoardSize * currentBoardSize;
+        for (let i = 0; i < limit; i++) {
+            const physIdx = logicalToPhysical(i);
+            sdaStr += boardState[physIdx];
+        }
+        return `~SDA${sdaStr}#`;
+    }
+
+    function setMode(mode) {
+        if (mode === 'alt' && placeMode === 'alt') nextStone = 3 - nextStone; 
+        else if (mode === 'alt') placeMode = 'alt'; 
+        else placeMode = mode;
+        updateModeUI();
+    }
+
+    function updateModeUI() {
+        document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+        if (placeMode === 'alt') {
+            const btn = document.getElementById('btn-mode-alt'); btn.classList.add('active'); btn.textContent = `Alt. (Next: ${nextStone === 1 ? 'Black' : 'White'})`;
+        } else if (placeMode === 'blk') document.getElementById('btn-mode-blk').classList.add('active');
+        else if (placeMode === 'wht') document.getElementById('btn-mode-wht').classList.add('active');
+    }
+
+    function clearAllStones() {
+        boardState.fill(0);
+        for (let i = 0; i < TOTAL_POINTS; i++) updateStoneUI(i);
+        if (autoReport) sendHardwareData(generateSDA());
+    }
+
+    function toggleIndices() { document.getElementById('board-grid').classList.toggle('show-indices', document.getElementById('cb-index').checked); }
+    function toggleTTY() { document.getElementById('bottom-section').classList.toggle('collapsed'); setTimeout(resizeBoard, 310); }
+
+    function resizeBoard() {
+        const wrapper = document.getElementById('izis-hardware-wrapper'), hardware = document.getElementById('izis-hardware');
+        if (!wrapper || !hardware) return;
+        hardware.style.transform = `scale(${Math.min(wrapper.clientWidth / 700, wrapper.clientHeight / 700, 1)})`;
+    }
+    window.addEventListener('resize', resizeBoard);
+
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const audioCtx = new AudioContext();
+    function playBeep() {
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+        osc.type = 'square'; osc.frequency.setValueAtTime(1200, audioCtx.currentTime); gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+        osc.connect(gain); gain.connect(audioCtx.destination); osc.start(); osc.stop(audioCtx.currentTime + 0.1); 
+    }
+    function playDoubleBeep() { playBeep(); setTimeout(playBeep, 150); }
+
+    const arrRLT = [61, 81, 101, 121, 129, 141, 147, 161, 165, 181, 183, 201];
+    const arrRLW = [82, 90, 102, 108, 122, 126, 142, 144, 162, 180, 182, 198, 202, 216, 222, 234, 242];
+    const arrRLO = [81, 85, 89, 90, 101, 104, 107, 110, 121, 123, 125, 130, 141, 142, 144, 149, 159, 161, 163, 168, 177, 180, 183, 186, 195, 199, 203, 204]; 
+
+    const gridEl = document.getElementById('board-grid');
+    const logEl = document.getElementById('tty-log');
+    const inputEl = document.getElementById('tty-input');
+    
+    function updateBoardUI() {
+        const offset = Math.floor((19 - currentBoardSize) / 2);
+        for (let r = 0; r < 19; r++) {
+            for (let c = 0; c < 19; c++) {
+                const hwIndex = r * 19 + (18 - c);
+                const intersection = document.getElementById(`pt-${hwIndex}`);
+                if (r >= offset && r < offset + currentBoardSize && c >= offset && c < offset + currentBoardSize) {
+                    intersection.parentElement.classList.remove('inactive-area');
+                    const logR = r - offset;
+                    const logC = (currentBoardSize - 1) - (c - offset); 
+                    const logIndex = logR * currentBoardSize + logC + 1;
+                    intersection.querySelector('.pt-index').textContent = logIndex;
+                } else {
+                    intersection.parentElement.classList.add('inactive-area');
+                    intersection.querySelector('.pt-index').textContent = '';
+                }
+            }
+        }
+    }
+
+    function initBoard() {
+        const hoshiPoints = [ [3,3], [3,9], [3,15], [9,3], [9,9], [9,15], [15,3], [15,9], [15,15] ];
+        for (let r = 0; r < 19; r++) {
+            for (let c = 0; c < 19; c++) {
+                const cell = document.createElement('div'); cell.className = 'grid-cell';
+                if (r === 0) cell.classList.add('edge-top'); if (r === 18) cell.classList.add('edge-bottom');
+                if (c === 0) cell.classList.add('edge-left'); if (c === 18) cell.classList.add('edge-right');
+                
+                const hLine = document.createElement('div'); hLine.className = 'grid-line-h';
+                const vLine = document.createElement('div'); vLine.className = 'grid-line-v';
+                cell.appendChild(hLine); cell.appendChild(vLine);
+
+                const hwIndex = r * 19 + (18 - c);
+                if (hoshiPoints.some(p => p[0] === r && p[1] === c)) {
+                    const hoshi = document.createElement('div'); hoshi.className = 'hoshi'; cell.appendChild(hoshi);
+                }
+
+                const intersection = document.createElement('div'); intersection.className = 'intersection'; intersection.id = `pt-${hwIndex}`;
+                const stone = document.createElement('div'); stone.className = 'stone'; stone.id = `stone-${hwIndex}`;
+                const led = document.createElement('div'); led.className = 'led'; led.id = `led-${hwIndex}`;
+                const ptIndex = document.createElement('div'); ptIndex.className = 'pt-index'; ptIndex.textContent = hwIndex + 1;
+
+                cell.addEventListener('mousedown', (e) => {
+                    if (cell.classList.contains('inactive-area')) return;
+                    e.preventDefault();
+                    if (e.button === 0) { 
+                        if (placeMode === 'alt') { boardState[hwIndex] = nextStone; nextStone = 3 - nextStone; updateModeUI(); } 
+                        else if (placeMode === 'blk') { boardState[hwIndex] = 1; } 
+                        else if (placeMode === 'wht') { boardState[hwIndex] = 2; }
+                    } else if (e.button === 2) { boardState[hwIndex] = 0; }
+                    
+                    updateStoneUI(hwIndex);
+                    if (autoReport) sendHardwareData(generateSDA());
+                });
+                cell.addEventListener('contextmenu', e => e.preventDefault());
+
+                intersection.appendChild(stone); intersection.appendChild(led); intersection.appendChild(ptIndex); 
+                cell.appendChild(intersection); gridEl.appendChild(cell);
+            }
+        }
+        updateBoardUI();
+        resizeBoard();
+    }
+
+    function updateStoneUI(hwIndex) {
+        const stone = document.getElementById(`stone-${hwIndex}`);
+        stone.classList.remove('stone-black', 'stone-white');
+        if (boardState[hwIndex] === 1) stone.classList.add('stone-black');
+        if (boardState[hwIndex] === 2) stone.classList.add('stone-white');
+    }
+
+    function drawCoordinates() {
+        const coordContainer = document.getElementById('coord-container');
+        coordContainer.innerHTML = '';
+        const mode = document.getElementById('coord-select').value;
+        if (mode === 'none') return;
+        
+        const colLabelsIntl = ['A','B','C','D','E','F','G','H','J','K','L','M','N','O','P','Q','R','S','T'];
+        const colLabelsSgf = ['a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s'];
+        const rowLabelsIntl = Array.from({length: 19}, (_, i) => 19 - i);
+        
+        const offset = Math.floor((19 - currentBoardSize) / 2);
+        const rows = mode === 'intl' ? rowLabelsIntl.slice(offset, offset + currentBoardSize) : colLabelsSgf.slice(0, currentBoardSize);
+        const cols = mode === 'intl' ? colLabelsIntl.slice(0, currentBoardSize) : colLabelsSgf.slice(0, currentBoardSize);
+        
+        for (let i = 0; i < currentBoardSize; i++) {
+            const offsetX = 40 + ((i + offset) * 32) + 16; 
+            const offsetY = 50 + ((i + offset) * 32) + 16;
+            addCoord(coordContainer, rows[i], 20, offsetY, false); 
+            addCoord(coordContainer, rows[i], 608 + 40 + 20, offsetY, false);
+            addCoord(coordContainer, cols[i], offsetX, 28, true); 
+            addCoord(coordContainer, cols[i], offsetX, 608 + 50 + 22, true);
+        }
+    }
+
+    function addCoord(container, text, x, y, isCenterX) {
+        const el = document.createElement('div'); el.className = 'coord-label'; el.textContent = text;
+        el.style.left = x + 'px'; el.style.top = y + 'px';
+        el.style.transform = isCenterX ? 'translate(-50%, -50%)' : 'translate(0, -50%)';
+        container.appendChild(el);
+    }
+
+    function printHelp() {
+        const helpText = `===============================================================
+[Simulator Supported Commands]
+
+[System & Sensor Status]
+~STA#       : Query board state (Returns 81/169/361 chars)
+~CTS1#      : Enable auto-report (Returns ~UDS1#)
+~CTS0#      : Disable auto-report (Returns ~UDS0#)
+~GVE#       : Get FW version (Returns ~VER121#)
+~GSV#       : Get separator config (Returns ~FJX0.32#)
+~SEP<xx>#   : Set separator config, e.g. ~SEP32# (Returns ~SSS#)
+~ADJ#       : Calibrate Hall sensors (Returns ~AEN# after 2s, real hardware could take > 30s)
+
+[Hardware Indicators & Warnings]
+~LED11#     : Top Green ON, Bottom White OFF (Returns ~LOS#)
+~LED21#     : Bottom White ON, Top Green OFF (Returns ~LOS#)
+~LED10/20#  : Both Indicators OFF (Returns ~LOS#)
+~AWO#       : Beep-Beep audio warning (Returns ~AWO#)
+
+[Full Matrix LED Rendering] *Requires 240ms Delay*
+~RGC#       : Clear ALL LEDs (Returns ~ALC#)
+~RGF#       : Clear LEDs but preserve BOD boundary (Returns ~SIC#)
+~FLL#       : Fill 19x19 with dim white base color
+~SA[L|M|W|U|N|R]<361_chars># : Matrix Write (Returns ~ALS#)
+~BOD19#     : Set board to 19/13/09, limits coordinates (Returns ~GBS#)
+
+[Dynamic Coordinates & Single LED] (Limited by BOD boundary)
+~SHP<pos>,r<R>g<G>b<B>,1# : Single LED light up (Returns ~HCS#)
+~TLO<pos>,r<R>g<G>b<B>,<m>#: Single LED light up sycned with indicators (Returns ~TLS#)
+~HOTA<pos>r...B...C...D...N<c># : Batch 4 LEDs (Returns ~HSM#)
+===============================================================`;
+        const line = document.createElement('div'); line.className = 'log-help'; line.textContent = helpText;
+        logEl.appendChild(line); logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function logTTY(msg, type) {
+        const line = document.createElement('div'); line.className = type === 'rx' ? 'log-rx' : 'log-tx';
+        const prefix = (type === 'rx' ? 'PC  > ' : 'BRD < ');
+
+        const sdaLen = currentBoardSize * currentBoardSize;
+        if (msg.startsWith('~SDA') && msg.length >= sdaLen + 5) {
+            const dataStr = msg.substring(4, 4 + sdaLen);
+            line.innerHTML = `${prefix}~SDA<span class="sda-collapsed">[...${sdaLen} data points (Click to expand)...]</span><span class="sda-full" style="display:none;" title="Click to collapse">${dataStr}</span>#`;
+            line.querySelector('.sda-collapsed').addEventListener('click', (e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'inline'; });
+            line.querySelector('.sda-full').addEventListener('click', (e) => { e.target.style.display = 'none'; e.target.previousSibling.style.display = 'inline'; });
+        } else {
+            line.textContent = prefix + msg;
+        }
+        logEl.appendChild(line); logEl.scrollTop = logEl.scrollHeight;
+    }
+    
+    function logWarn(msg) {
+        const line = document.createElement('div'); line.className = 'log-warn'; line.textContent = msg;
+        logEl.appendChild(line); logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function sendHardwareData(msg) { logTTY(msg, 'tx'); if(ws && ws.readyState === WebSocket.OPEN) ws.send(msg); }
+
+    function animateShape(arrIdx, colorHex) {
+        arrIdx.forEach(pos => {
+            const hwIndex = pos - 1; 
+            if(hwIndex >= 0 && hwIndex < TOTAL_POINTS) {
+                const led = document.getElementById(`led-${hwIndex}`);
+                if (led) { led.className = 'led'; led.classList.add('led-glow'); led.style.setProperty('--led-color', colorHex); }
+            }
+        });
+    }
+
+    function checkDelay(prefix) {
+        const now = Date.now();
+        if (lastCmdTime > 0) {
+            const requiredDelay = ['RGC', 'RGF', 'FLL', 'SAR', 'SAL', 'SAM', 'SAW', 'SAU', 'SAN'].includes(lastCmdPrefix) ? 240 : 80;
+            if (now - lastCmdTime < requiredDelay) {
+                logWarn(`⚠️ [Delay Warning] Only ${now - lastCmdTime}ms elapsed since last command (${lastCmdPrefix}). Should be >= ${requiredDelay}ms.`);
+            }
+        }
+        lastCmdTime = now; lastCmdPrefix = prefix;
+    }
+
+    function handleDynamicSingleLED(logicalPosStr, r, g, b, isHOT = false) {
+        const logPos = parseInt(logicalPosStr, 10) - 1; 
+        const limit = currentBoardSize * currentBoardSize;
+        if (logPos >= 0 && logPos < limit) {
+            const physPos = logicalToPhysical(logPos);
+            const led = document.getElementById(`led-${physPos}`);
+            if (led) {
+                if (!isHOT) led.classList.add('shp-lit'); 
+                led.classList.add('led-glow');
+                led.style.setProperty('--led-color', `rgb(${parseInt(r,10)},${parseInt(g,10)},${parseInt(b,10)})`);
+            }
+        }
+    }
+
+    function processCommand(cmd) {
+        logTTY(cmd, 'rx');
+        const match = cmd.match(/^~([A-Z]{3})(.*)#$/);
+        if (!match) return;
+
+        let prefix = match[1], payload = match[2];
+        checkDelay(prefix);
+
+        const indBlack = document.getElementById('indicator-black'), indWhite = document.getElementById('indicator-white');
+
+        if (prefix === 'STA') { sendHardwareData(generateSDA()); }
+        else if (prefix === 'GVE') { sendHardwareData('~VER121#'); }
+        else if (prefix === 'GSV') { sendHardwareData(`~FJX${sepSetting}#`); }
+        else if (prefix === 'SEP') { sepSetting = `0.${payload}`; sendHardwareData('~SSS#'); }
+        else if (prefix === 'ADJ') { setTimeout(() => sendHardwareData('~AEN#'), 2000); }
+        else if (prefix === 'CTS') { autoReport = (payload === '1'); sendHardwareData(`~UDS${payload}#`); }
+        else if (prefix === 'RGC') { document.querySelectorAll('.led').forEach(el => { el.className = 'led'; el.style.removeProperty('--led-color'); }); sendHardwareData('~ALC#'); }
+        else if (prefix === 'RGF') { document.querySelectorAll('.led:not(.bod-lit)').forEach(el => { el.className = 'led'; el.style.removeProperty('--led-color'); }); sendHardwareData('~SIC#'); }
+        else if (prefix === 'FLL') { document.querySelectorAll('.led').forEach(el => { el.className = 'led'; el.classList.add('led-glow'); el.style.setProperty('--led-color', '#888888'); }); }
+        else if (prefix === 'LED') {
+            if (payload === '11') { indBlack.classList.add('led-on-green'); indWhite.classList.remove('led-on-white'); }
+            if (payload === '21') { indWhite.classList.add('led-on-white'); indBlack.classList.remove('led-on-green'); }
+            if (payload === '10' || payload === '20') { indBlack.classList.remove('led-on-green'); indWhite.classList.remove('led-on-white'); }
+            sendHardwareData('~LOS#');
+        }
+        else if (prefix === 'SHP' || prefix === 'TLO') {
+            document.querySelectorAll('.shp-lit').forEach(el => { el.classList.remove('shp-lit', 'led-glow'); el.style.removeProperty('--led-color'); });
+            const parts = payload.split(',');
+            if (parts.length >= 2) {
+                const rgbMatch = parts[1].match(/r(\d{3})g(\d{3})b(\d{3})/);
+                if (rgbMatch) handleDynamicSingleLED(parts[0], rgbMatch[1], rgbMatch[2], rgbMatch[3]);
+                
+                if (prefix === 'TLO') {
+                    const mode = parts[2] ? parts[2] : '1'; 
+                    if (mode === '1') { indBlack.classList.add('led-on-green'); indWhite.classList.remove('led-on-white'); }
+                    else if (mode === '2') { indWhite.classList.add('led-on-white'); indBlack.classList.remove('led-on-green'); }
+                    else if (mode === '3') { indBlack.classList.add('led-on-green'); indWhite.classList.add('led-on-white'); }
+                    else if (mode === '0') { indBlack.classList.remove('led-on-green'); indWhite.classList.remove('led-on-white'); }
+                    sendHardwareData('~TLS#');
+                } else {
+                    sendHardwareData('~HCS#');
+                }
+            }
+        }
+        else if (prefix === 'HOT') {
+            const re = /^A(\d{3})r(\d{3})g(\d{3})b(\d{3})B(\d{3})r(\d{3})g(\d{3})b(\d{3})C(\d{3})r(\d{3})g(\d{3})b(\d{3})D(\d{3})r(\d{3})g(\d{3})b(\d{3})N([1-4])$/;
+            const m = payload.match(re);
+            if (m) {
+                for (let i = 0; i < parseInt(m[17], 10); i++) {
+                    handleDynamicSingleLED(m[1 + i*4], m[2 + i*4], m[3 + i*4], m[4 + i*4], true);
+                }
+                sendHardwareData('~HSM#');
+            }
+        }
+        else if (['SAR', 'SAL', 'SAM', 'SAW', 'SAU', 'SAN'].includes(prefix)) {
+            document.querySelectorAll('.led').forEach(el => { el.className = 'led'; });
+            const colorMap = { '1':'#00ff00', '2':'#ffffff', '3':'#ff0000', '4':'#0000ff', '5':'#ffff00', '6':'#ff00ff', '7':'#00ffff', '8':'#ff8800', '9':'#888888' };
+            for (let i = 0; i < 361 && i < payload.length; i++) {
+                if (payload[i] !== '0' && colorMap[payload[i]]) {
+                    const led = document.getElementById(`led-${i}`);
+                    if (led) { led.classList.add('led-glow'); led.style.setProperty('--led-color', colorMap[payload[i]]); }
+                }
+            }
+            sendHardwareData('~ALS#');
+        }
+        else if (prefix === 'BOD') {
+            let bound = parseInt(payload, 10);
+            if ([9, 13, 19].includes(bound)) {
+                currentBoardSize = bound;
+                updateBoardUI(); drawCoordinates();
+                
+                document.querySelectorAll('.bod-lit').forEach(el => el.classList.remove('bod-lit', 'led-glow'));
+                if (bound === 9 || bound === 13) {
+                    let offset = Math.floor((19 - bound) / 2);
+                    for(let r=-1; r<=bound; r++) {
+                        for(let c=-1; c<=bound; c++) {
+                            if (r === -1 || r === bound || c === -1 || c === bound) {
+                                let phys = (r + offset) * 19 + (c + offset);
+                                let led = document.getElementById(`led-${phys}`);
+                                if(led) { led.classList.add('led-glow', 'bod-lit'); led.style.setProperty('--led-color', '#00ff00'); }
+                            }
+                        }
+                    }
+                }
+                sendHardwareData(`~GBS${payload}#`); 
+            }
+        }
+        else if (prefix === 'AWO') { playDoubleBeep(); sendHardwareData('~AWO#'); }
+        else if (prefix === 'AWT' || prefix === 'AWS') { /* do nothing */ }
+        else if (prefix === 'RLT') { animateShape(arrRLT, '#0f0'); sendHardwareData(`~DSC#`); }
+        else if (prefix === 'RLW') { animateShape(arrRLW, '#f00'); sendHardwareData(`~DSC#`); }
+        else if (prefix === 'RLO') { animateShape(arrRLO, '#0f0'); sendHardwareData(`~DSC#`); }
+    }
+
+    function insertCmd(cmd) { inputEl.value = cmd; inputEl.focus(); }
+    function applyTemplate() { 
+        const sel = document.getElementById('cmd-template');
+        if (sel.value) { insertCmd(sel.value); sel.value = ""; } 
+    }
+    
+    function sendColorCmd() {
+        let posVal = parseInt(document.getElementById('led-pos').value, 10);
+        let maxPos = currentBoardSize * currentBoardSize;
+        if (isNaN(posVal) || posVal < 1 || posVal > maxPos) { alert(`For current board size, position must be between 1 and ${maxPos}.`); return; }
+        
+        const posStr = String(posVal).padStart(3, '0'); 
+        const hex = document.getElementById('led-color').value;
+        const r = parseInt(hex.slice(1,3), 16).toString().padStart(3, '0');
+        const g = parseInt(hex.slice(3,5), 16).toString().padStart(3, '0');
+        const b = parseInt(hex.slice(5,7), 16).toString().padStart(3, '0');
+        insertCmd(`~SHP${posStr},r${r}g${g}b${b},1#`); sendInputCmd();
+    }
+
+    function sendInputCmd() { if(inputEl.value) { processCommand(inputEl.value.trim()); inputEl.value = ''; } }
+
+    const COMMANDS = [
+        '~STA#', '~CTS1#', '~CTS0#', '~RGC#', '~RGF#', '~FLL#',
+        '~BOD19#', '~BOD13#', '~BOD09#', '~GVE#', '~GSV#', '~SEP32#', '~ADJ#',
+        '~LED11#', '~LED10#', '~LED21#', '~LED20#', 
+        '~AWO#', '~AWS#', '~AWT#', '~RLW#', '~RLO#', '~RLT#', '~TLO', '~HOT'
+    ];
+    let tabMatches = [], tabIdx = -1;
+    
+    inputEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Tab') {
+            e.preventDefault();
+            if (tabMatches.length === 0) {
+                const val = inputEl.value.toUpperCase();
+                tabMatches = COMMANDS.filter(c => c.startsWith(val));
+                tabIdx = 0;
+            } else { 
+                tabIdx = (tabIdx + 1) % tabMatches.length; 
+            }
+            if (tabMatches.length > 0) inputEl.value = tabMatches[tabIdx];
+        } else if (e.key === 'Enter') {
+            sendInputCmd();
+        } else { 
+            tabMatches = []; 
+        }
+    });
+
+    const bindButton = (btnId, clickCmd, longCmd) => {
+        const btn = document.getElementById(btnId);
+        let timer, isLong = false, isPressed = false;
+        btn.addEventListener('mousedown', () => { isPressed = true; isLong = false; timer = setTimeout(() => { isLong = true; }, 1000); });
+        btn.addEventListener('mouseup', () => { if (!isPressed) return; isPressed = false; clearTimeout(timer); sendHardwareData(isLong ? longCmd : clickCmd); });
+        btn.addEventListener('mouseleave', () => { isPressed = false; clearTimeout(timer); });
+    };
+    bindButton('btn-top', '~BKY#', '~BTK#'); bindButton('btn-bottom', '~WKY#', '~WTK#');
+
+    function connectWS() {
+        ws = new WebSocket(document.getElementById('ws-url').value);
+        ws.onopen = () => { document.getElementById('ws-status').textContent = 'Connected'; document.getElementById('ws-status').style.color = '#2ecc71'; };
+        ws.onmessage = (e) => { processCommand(e.data); };
+        ws.onclose = () => { document.getElementById('ws-status').textContent = 'Offline'; document.getElementById('ws-status').style.color = '#e74c3c'; ws = null; };
+    }
+
+    initBoard();
+</script>
+</body>
+</html>
