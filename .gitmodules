@@ -1,0 +1,3 @@
+[submodule "IZISBridge"]
+	path = IZISBridge
+	url = https://github.com/wjchen-vlsi/IZISBridge
