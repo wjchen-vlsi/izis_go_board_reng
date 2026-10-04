@@ -4,7 +4,7 @@ import sys
 import threading
 
 # Configuration
-HOST = '127.0.0.1'  # Use the board's IP if connecting via IZISBridge/socat over Wi-Fi
+HOST = '127.0.0.1'  # Board IP if connecting via IzisBridge over Wi-Fi
 PORT = 5000
 
 # Threading sync primitives
@@ -12,6 +12,9 @@ target_event = threading.Event()
 target_prefix = None
 is_waiting = False
 menu_active = False
+
+# Palette test payload: row 1 tests colors 1-9 separated by 0, remaining rows 0
+PALETTE_TEST_PAYLOAD = "0102030405060708090" + ("0" * 342)
 
 # Command Dictionary Format:
 # (Label, Command String, Expects_Response, Timeout_Seconds, Target_Response_Prefix)
@@ -35,17 +38,21 @@ COMMANDS = [
     ("Batch 4 Corners (HOT)", "~HOTA001r255g000b000B019r000g255b000C343r000g000b255D361r255g255b255N4#", True, 1.0, "HSM"),
     ("Clear All LEDs (RGC)", "~RGC#", True, 1.0, "ALC"),
     ("Clear Inner LEDs (RGF)", "~RGF#", True, 1.0, "SIC"),
-    ("Matrix Write Demo (SAR)", "~SAR" + "1"*361 + "#", True, 1.0, "ALS"),
+    ("Matrix SAR Palette Test (Row 1)", f"~SAR{PALETTE_TEST_PAYLOAD}#", True, 1.0, "ALS"),
+    ("Matrix SAL All Green (SAL)", "~SAL" + ("1" * 361) + "#", True, 1.0, "ALS"),
+    ("Matrix SAM All Green (SAM)", "~SAM" + ("1" * 361) + "#", True, 1.0, "ALS"),
+    ("Matrix SAW All Green (SAW)", "~SAW" + ("1" * 361) + "#", True, 1.0, "ALS"),
+    ("Matrix SAR All Green (SAR)", "~SAR" + ("1" * 361) + "#", True, 1.0, "ALS"),
     ("Draw OK Graphic (RLO)", "~RLO#", True, 1.0, "DSC"), 
     ("Draw V Graphic (RLT)", "~RLT#", True, 1.0, "DSC"),
     ("Draw X Graphic (RLW)", "~RLW#", True, 1.0, "DSC"),
-    ("Fill Dim White (FLL)", "~FLL#", False, 1.0, None),    # No response expected
-    ("Audio Beep (AWO)", "~AWO#", False, 1.0, None),        # No response expected
-    ("Calibrate Sensors (ADJ)", "~ADJ#", True, 90.0, "AEN"),# VERY LONG TIMEOUT
+    ("Fill Dim White (FLL)", "~FLL#", False, 0.0, None),     # No response, 240ms mandatory delay
+    ("Audio Beep (AWO)", "~AWO#", False, 0.0, None),         # No response, 80ms baseline delay
+    ("Calibrate Sensors (ADJ)", "~ADJ#", True, 90.0, "AEN"), # Blocks MCU for > 30s
 ]
 
 def print_async(msg):
-    """Safely prints async messages without completely breaking the input prompt."""
+    """Safely prints async messages without breaking the active menu prompt."""
     if menu_active:
         sys.stdout.write(f"\r\033[K{msg}\nSelect an option: ")
         sys.stdout.flush()
@@ -53,7 +60,7 @@ def print_async(msg):
         print(msg)
 
 def listener_thread(sock):
-    """Background thread to continuously read, buffer, and parse packets."""
+    """Background thread to continuously read, buffer, and unpack packets."""
     global target_prefix, is_waiting
     buffer = ""
     
@@ -66,52 +73,49 @@ def listener_thread(sock):
                 
             buffer += data
             
-            # Packet Extraction Loop
+            # Packet Extraction Loop: handles concatenated responses (~ALC#~BKY#)
             while True:
                 start_idx = buffer.find('~')
                 if start_idx == -1:
-                    buffer = "" # No start character, flush garbage
+                    buffer = ""  # No start delimiter, flush noise
                     break
                     
                 end_idx = buffer.find('#', start_idx)
                 if end_idx == -1:
-                    # Partial Packet Check / Packet Loss Protection
-                    # If we find ANOTHER '~' before a '#', the first packet was corrupted/truncated.
+                    # Drop corrupted fragments if a second '~' arrived before '#'
                     next_start = buffer.find('~', start_idx + 1)
                     if next_start != -1:
-                        print_async("[WARNING] Packet loss detected. Dropping corrupted fragment.")
-                        buffer = buffer[next_start:] # Discard everything before the new '~'
+                        print_async("[WARNING] Dropping corrupted fragment before new '~'.")
+                        buffer = buffer[next_start:]
                         continue
-                    break # Wait for more data to complete the packet
+                    break  # Incomplete packet, wait for next socket read
                     
-                # Complete valid packet found!
-                packet = buffer[start_idx:end_idx+1]
-                buffer = buffer[end_idx+1:] # Remove processed packet from buffer
+                packet = buffer[start_idx:end_idx + 1]
+                buffer = buffer[end_idx + 1:]  # Advance buffer past extracted packet
                 
-                # Check if this packet is the one the main thread is waiting for
+                # Check for expected ACK
                 if is_waiting and target_prefix and packet.startswith(f"~{target_prefix}"):
                     print_async(f"[RX - MATCH] {packet}")
                     is_waiting = False
-                    target_event.set() # Unblock the main thread
+                    target_event.set()
                 else:
-                    # It's a background event (e.g. SDA report, BKY button press, or unexpected)
                     print_async(f"[RX - ASYNC EVENT] {packet}")
                     
     except Exception as e:
         print_async(f"\n[LISTENER ERROR] {e}")
 
 def execute_command(sock, cmd_str, expect_resp, timeout_sec, target_resp):
-    """Sends a command and coordinates with the listener thread to await the response."""
+    """Sends a command, handles response synchronization, and applies pacing."""
     global target_prefix, is_waiting, menu_active
     
-    menu_active = False # Disable prompt redraws during active execution
+    menu_active = False
     target_prefix = target_resp
     target_event.clear()
     is_waiting = expect_resp
 
     print(f"\n[TX - SEND] {cmd_str}")
     if cmd_str.startswith("~ADJ"):
-        print(">> WARNING: ADJ Calibration takes > 30 seconds. Do NOT interrupt. Listening...")
+        print(">> WARNING: ADJ Calibration blocks MCU > 30 seconds. Do not interrupt.")
 
     try:
         sock.sendall(cmd_str.encode('ascii'))
@@ -121,22 +125,23 @@ def execute_command(sock, cmd_str, expect_resp, timeout_sec, target_resp):
         return
 
     if expect_resp:
-        # Block the main thread until the listener thread signals the event OR timeout expires
         success = target_event.wait(timeout_sec)
         if not success:
             print(f"[TIMEOUT] Failed to receive '{target_resp}' within {timeout_sec}s.")
-        else:
-            # Enforce the 240ms mandatory render delay for heavy commands
-            heavy_cmds = ["~RGC#", "~RGF#", "~FLL#"]
-            if any(cmd_str.startswith(hc.replace('#', '')) for hc in heavy_cmds) or cmd_str.startswith("~SA"):
-                print(">> Delaying 240ms to prevent MCU crash...")
-                time.sleep(0.24)
     else:
-        # Wait a short duration to prove no response was sent
-        time.sleep(timeout_sec)
-        print(f"[OK] Execution complete. No response expected.")
-        
+        print("[OK] Dispatched (fire-and-forget).")
+
     is_waiting = False
+
+    # Hardware Pacing Delays:
+    # Heavy render/clear commands require 240ms extended delay
+    heavy_cmds = ("~RGC", "~RGF", "~FLL")
+    if any(cmd_str.startswith(hc) for hc in heavy_cmds):
+        print(">> Delaying 240ms (extended render delay)...")
+        time.sleep(0.24)
+    else:
+        # Standard commands (including ~SA* matrix writes) use 80ms baseline delay
+        time.sleep(0.08)
 
 def interactive_loop():
     global menu_active
@@ -149,20 +154,19 @@ def interactive_loop():
         print(f"Connection failed: {e}")
         sys.exit(1)
 
-    # Start the background listener thread
     listener = threading.Thread(target=listener_thread, args=(sock,), daemon=True)
     listener.start()
 
     while True:
         menu_active = False
-        print("\n" + "="*50)
-        print("Command Menu")
-        print("="*50)
+        print("\n" + "=" * 55)
+        print("Izis Protocol Command Menu")
+        print("=" * 55)
         for i, cmd in enumerate(COMMANDS):
             print(f"[{i:02d}] {cmd[0]}")
         print("[M]  Manual Command Entry")
         print("[Q]  Quit")
-        print("="*50)
+        print("=" * 55)
         
         menu_active = True
         choice = input("Select an option: ").strip().upper()
@@ -185,12 +189,12 @@ def interactive_loop():
             
             if expect_resp:
                 target_resp = input("Expected response prefix (e.g., SDA, leave blank for any): ").strip()
-                if not target_resp: target_resp = None
+                if not target_resp:
+                    target_resp = None
                 
                 timeout_input = input("Timeout in seconds (Default 2.0): ").strip()
-                if timeout_input: timeout_sec = float(timeout_input)
-            else:
-                timeout_sec = 1.0
+                if timeout_input:
+                    timeout_sec = float(timeout_input)
                 
             execute_command(sock, cmd_str, expect_resp, timeout_sec, target_resp)
             

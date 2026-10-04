@@ -1,48 +1,49 @@
 # Izis Smart Go Board - Third-Party Development Kit & Reverse Engineering Specs
 
 > **⚠️ DISCLAIMER**
-> This repository is the result of personal reverse engineering research. The author makes no guarantees regarding its accuracy, safety, or whether it aligns with Izis's original design intentions. Incorrect usage of these commands may potentially cause damage to the hardware. The author is in no way affiliated with Izis. Furthermore, there is no guarantee that Izis will not update their system in the future to block or restrict third-party development. Use this information entirely at your own risk.
+> This repository is the result of personal reverse engineering research through the decompilation of genuine Izis applications and serial packet inspection. The author makes no guarantees regarding its accuracy, safety, or whether it aligns with Izis's original design intentions. Incorrect usage of these commands may potentially cause damage to the hardware. The author is in no way affiliated with Izis. Furthermore, there is no guarantee that Izis will not update their system in the future to block or restrict third-party development. Use this information entirely at your own risk.
 
 ## Overview
-This repository contains essential tools and documentation to facilitate third-party Android application development for the **Izis (隱智) Smart Go Board**. Due to the proprietary nature of the hardware, these tools have been designed to bridge the gap between standard Android app development and the specialized UART hardware on the physical board.
+This repository contains essential tools, specifications, and bridging software to facilitate third-party application development for the **Izis (隱智) Smart Go Board**. Due to the proprietary nature of the board's embedded hardware, these tools bridge standard application runtimes (Android, PC, or Web) to the internal microcontroller unit (MCU) over UART `/dev/ttyS1` at 115200 baud (8-N-1).
 
 ### Note on PC-Based & Web-Based Applications
-While this guide primarily targets native Android app development (to run directly on the board's internal screen), it is entirely possible to develop a PC-based or Web-based application using either of the networked development architectures below. 
+While this guide supports native Android app development (to run directly on the board's internal screen), it is equally suited for building PC-based or Web-based clients (such as KataGo bridges or custom GUIs) using the networked architectures below.
 
 ---
 
 ## Development Architectures
 
-Depending on whether you have the physical board on hand and your preferred workflow, this repository supports three primary development architectures:
+Depending on hardware availability and your workflow, this repository supports three primary development setups:
 
-### Architecture A: Full Simulation (Emulator + Bridge + Simulator)
-Ideal for local development when you do not have access to the physical board or when you do not want to connect to the physical board all the time. Your app communicates with the HTML simulator via a Python routing bridge.
+### Architecture A: Full Simulation (Emulator / PC App + Bridge + Web Simulator)
+Ideal for local development without the physical board. Your app communicates with the HTML simulator via a Python routing bridge.
 
 ```text
 [ PC Local Environment ]
 
 +-----------------------+           +------------------------+           +-----------------------+
 |   Android Emulator    |           |izis_simulator_bridge.py|           |    Web Browser        |
-|   or Local PC App     |   TCP     |  (TCP <-> WS Bridge)   | WebSocket | (izis_simulator.html) |
+|   or Local PC App     |    TCP    |  (TCP <-> WS Bridge)   | WebSocket | (izis_simulator.html) |
 |                       | <-------> |                        | <-------> |                       |
 | Connects to:          | Port 5000 | TCP Listen: 5000       | Port 8080 | Connects to:          |
 | 127.0.0.1:5000        |           | WS  Listen: 8080       |           | ws://127.0.0.1:8080   |
 +-----------------------+           +------------------------+           +-----------------------+
 ```
 
-### Architecture B: Hardware-in-the-Loop (Local App or socat Forwarding)
+### Architecture B: Hardware-in-the-Loop (Local App / PC over Wi-Fi)
 Ideal for testing PC-based or Web-based applications directly against the physical hardware over your local network.
 
-#### Method 1: The Izis Bridge Android App (Recommended)
-[IZISBridge](https://github.com/wjchen-vlsi/IZISBridge) includes a pre-built Android application in the release section (`app-debug.apk`).
-Sideloading this app onto the board provides an UI-driven way to expose the serial port over TCP without requiring terminal commands.
-Full source code is under [`IZISbridge`](IZISBridge). 
+#### Method 1: The IzisBridge Android App (Recommended)
+[IZISBridge](https://github.com/wjchen-vlsi/IZISBridge) includes a pre-built Android application in the releases section (`app-debug.apk`). Sideloading this app onto the board provides a UI-driven way to expose `/dev/ttyS1` over TCP without needing shell access. Source code is located in [`IZISBridge`](IZISBridge).
 
-1. Install `app-debug.apk` via USB flash drive or ADB.
+1. Install `app-debug.apk` via USB flash drive or Wireless ADB.
 2. Open the app on the Izis Smart Go Board.
 3. Configure the **Serial Device Path** (defaults to `/dev/ttyS1`) and the **TCP Port** (defaults to `5000`).
-4. Tap **Start Forwarding**.
-5. Connect your PC/Web based app or local emulator to `<BOARD_IP>:<PORT>`.
+4. (Optional) Check **APP > BRD** and **BRD > APP** to inspect command traffic in real time.
+5. Tap **Start Forwarding**.
+6. Connect your PC/Web app, test script, or local emulator to `<BOARD_IP>:5000`.
+
+> **⚠️ Stock Launcher Visibility:** The board's default launcher hides third-party APKs unless their package name contains `cn.izis`. `IZISBridge` uses `cn.izis.izisbridge` to remain visible on the home screen. Any custom app intended to run on the board should adopt this naming convention or use a third-party launcher.
 
 ```text
 [ PC Local Environment ]                                     [ Physical Izis Smart Go Board ]
@@ -54,23 +55,22 @@ Full source code is under [`IZISbridge`](IZISBridge).
 | Connects to:          |                                    | Forwards to: /dev/ttyS1          |
 | <BOARD_IP>:5000       |                                    |                                  |
 +-----------------------+                                    +---------|------------------------+
-                                                                       | UART (/dev/ttyS1)
+                                                                       | UART (/dev/ttyS1, 115200)
                                                                        v
                                                              +----------------------------------+
                                                              | Go Board Hardware MCU            |
-                                                             | (LEDs, Sensors, Buttons)         |
+                                                             | (LED Matrix, Sensors, Buttons)   |
                                                              +----------------------------------+
 ```
-#### Method 2: Command-Line Forwarding via socat (Alternative)
-For developers who prefer terminal tools and already have an active ADB shell connection to the rooted board, you can achieve the same result using socat.
 
-Run the following command directly on the board via adb shell:
-```text
+#### Method 2: Command-Line Forwarding via socat (Alternative)
+For developers with an active root ADB shell connection to the board, you can forward serial data directly via terminal:
+```bash
 socat tcp-l:5000,reuseaddr,fork file:/dev/ttyS1,b115200,raw,echo=0
 ```
 
-### Architecture C: Direct Sideloading (Blind Development)
-If you do not wish to use the simulator or `socat` networking, you can develop "blindly" on your PC, compile the APK, and sideload it directly to the physical board for every single test.
+### Architecture C: Direct Sideloading (On-Device Development)
+Compile your app and sideload it directly onto the physical board to interact with `/dev/ttyS1` locally.
 
 ```text
 [ PC Local Environment ]                             [ Physical Izis Smart Go Board ]
@@ -88,42 +88,55 @@ If you do not wish to use the simulator or `socat` networking, you can develop "
 ## Repository Contents
 
 ### 1. [`izis_protocol_spec.md`](izis_protocol_spec.md)
-The **Third-Party Developer Guide & Protocol Specification**. This markdown file acts as the primary reference manual. It thoroughly documents:
-*   How to prepare the Izis Smart Go Board's Android environment (ADB over Wi-Fi, custom launchers, etc.).
-*   Hardware physical layouts and dynamic coordinate system mappings (19x19, 13x13, 9x9).
-*   A list of known UART instructions (commands), including usage, examples and important notes.
+The **Third-Party Developer Guide & Protocol Specification**. This is the primary reference manual. It thoroughly documents:
+*   Android system setup (Wi-Fi ADB pairing, launcher workarounds, permissions, native app endpoints).
+*   Coordinate system rules (1-based, right-to-left, top-to-bottom) and dynamic board sizing (`~BOD19#`, `~BOD13#`, `~BOD09#`).
+*   Complete UART command reference with expected ACKs and timing requirements.
+*   Empirical 5-color visual mapping under `~SAR`, matrix brightness scaling (`SAR` > `SAL` > `SAM` > `SAW`), and the 50-LED hardware current limit.
 
 ### 2. [`izis_simulator.html`](izis_simulator.html)
-An **Izis Smart Go Board Simulator** written in HTML, CSS, and JS. 
-*   **Purpose:** Since the physical board operates via `/dev/ttyS1`, testing applications without a physical board (e.g., using an Android emulator) is difficult. This visual simulator replicates the board's LED arrays, button presses, and allow stone placements.
-*   **Usage:** Open it in any modern browser. It connects via WebSocket to the Python bridge to display real-time hardware status and emit simulated events and command responses to your app. Left-click to place and right-click to remove stones.
+An **Izis Smart Go Board Simulator** written in HTML, CSS, and JavaScript.
+*   **Purpose:** Replicates the physical board's 19x19 LED matrix, boundary boxes, dual turn indicators, clock buttons, and Hall sensor stone placements in a web browser.
+*   **Features:** Accurate empirical color palette emulation, stone placement toggles (Left-click to place, Right-click to clear), interactive command console with Tab autocomplete, and delay violation warnings.
 
 ### 3. [`izis_simulator_bridge.py`](izis_simulator_bridge.py)
-A **TCP to WebSocket Bridge Script** written in Python.
-*   **Purpose:** To bridge communication between your Android application running in an emulator and the HTML visual simulator.
-*   **Usage:** Run the script using Python 3 (`python izis_simulator_bridge.py`). 
-    *   It opens a **TCP socket on port 5000**. Configure your Android App's custom serial wrapper (e.g., `TcpConnectDirect`) to connect to `<IP>:5000`.
-    *   It simultaneously opens a **WebSocket on port 8080**. Click "Connect" on the `izis_simulator.html` UI to bind them together. Data is seamlessly shuttled back and forth.
+An asynchronous **TCP-to-WebSocket Bridge Script** written in Python.
+*   **Purpose:** Bridges communication between a TCP client (Android app, test script, or AI engine) and the HTML simulator via WebSockets.
+*   **Usage:** Run with `python izis_simulator_bridge.py`. Listens on TCP port `5000` (for apps/scripts) and WebSocket port `8080` (for the browser simulator). Handles frame delimitation (`~...#`) and stream fragmentation automatically.
 
 ### 4. [`IZISBridge`](IZISBridge)
-A demo **Android application to forward IZIS Smart Go Board serial device over TCP** and its full source code for third-party development.
-*   Provide an UI-driven way to expose the Go Board hardware serial device over TCP without requiring terminal commands.
-*   If developers are creating a PC or Web-based front-end applications for the smart Go Board, this can be used as (or as the template of) the companion board-side app that allows front-end application connecting to the board.
+A lightweight **Android Serial-to-TCP Forwarder App** (`cn.izis.izisbridge`).
+*   Runs directly on the Izis board to expose `/dev/ttyS1` over a local TCP socket.
+*   Features thread-safe single-client handling, automated local IPv4 resolution, and real-time rolling traffic monitors for inbound and outbound packets.
 
 ### 5. [`izis_cmd_test.py`](izis_cmd_test.py)
-An **Interactive Command Testing Tool** written in Python.
-*   **Purpose:** Before writing a full Android or PC/Web application, developers can use this CLI tool to directly interact with the Go board simulator or the physical hardware, fire specific commands, and monitor how the hardware reacts. It connects directly to the TCP port exposed by `izis_simulator_bridge.py`, `IZISBridge` or `socat`.
+An **Interactive Command Testing CLI Tool** written in Python.
+*   **Purpose:** Rapid interactive debugging tool to verify commands against the simulator or physical hardware before writing client code.
 *   **Key Features:**
-    *   **Interactive Menu:** Comes pre-loaded with known commands (e.g., `BOD19`, `SHP`, `HOT`, `LED11`) so you don't have to memorize the syntax.
-    *   **Asynchronous Event Handling:** The MCU often emits passive events (like `~BKY#` button presses or `~SDA...#` auto-reports). This script filters these background events without breaking the wait cycle for your command's specific ACK response.
-    *   **Smart Timeouts:** It inherently understands the protocol's quirks, such as commands that return nothing (e.g., `~FLL#`, `~AWO#`), and commands that require extremely long wait times (e.g., the `~ADJ#` calibration).
-    *   **Safety Constraints:** Automatically enforces the mandatory 240ms delay after heavy matrix-rendering commands like the genuine Izis applications.
-    *   **Manual Mode:** Allows developers to input raw `~...#` strings.
+    *   Pre-loaded command presets (`STA`, `BODxx`, `HOT`, `SAR` palette test, `LEDxx`, `ADJ`).
+    *   Background listener thread that parses asynchronous events (`~SDA...#`, button events `~BKY#` / `~WKY#`) without desynchronizing active command responses.
+    *   Automatic timing compliance (240 ms extended delay for `~RGC#`, `~RGF#`, `~FLL#`; 80 ms baseline pacing for standard commands).
+    *   Manual entry mode for custom protocol strings.
+
+---
 
 ## Getting Started
 
-1. **Review the Specifications:** Read `izis_protocol_spec.md` fully to understand how the hardware operates and its limitations.
-2. **Install Dependencies:** Make sure Python 3 is installed along with the websockets library (`pip install websockets`).
-3. **Start the Bridge:** Execute `izis_simulator_bridge.py`.
-4. **Launch the Simulator:** Open `izis_simulator.html` in your browser and click "Connect".
-5. **Develop your App:** Direct your Android application's serial logic to connect to the Python TCP socket rather than the physical `/dev/ttyS1` port while in debug mode. Watch your logic trigger lights and states in the HTML simulator in real-time.
+1. **Review the Specification:** Read [`izis_protocol_spec.md`](izis_protocol_spec.md) to understand packet framing, ACK handling, and timing constraints.
+2. **Install Dependencies:**
+   ```bash
+   pip install websockets
+   ```
+3. **Run the Simulation Environment:**
+   * Terminal 1: Start the bridge server:
+     ```bash
+     python izis_simulator_bridge.py
+     ```
+   * Browser: Open `izis_simulator.html` and click **Connect**.
+4. **Smoke-Test the Pipeline:**
+   * Terminal 2: Run the interactive test CLI:
+     ```bash
+     python izis_cmd_test.py
+     ```
+   * Send test commands (e.g., `[19] SAR Palette Test` or `[16] Batch 4 Corners`) and observe real-time rendering in `izis_simulator.html`.
+5. **Develop Your Application:** Direct your client socket logic to connect to `127.0.0.1:5000` during development, or point it to `<BOARD_IP>:5000` when running against the physical board via `IZISBridge`.

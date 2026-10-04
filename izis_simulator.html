@@ -172,9 +172,10 @@
                     <option value="~LED21#">LED21 (Bottom White ON)</option>
                     <option value="~LED10#">LED10 (Both Indicators OFF)</option>
                 </optgroup>
-                <optgroup label="Advanced Lighting Commands">
+                <optgroup label="Matrix & Advanced Lighting">
                     <option value="~RGF#">RGF (Clear LEDs, Preserve Boundary)</option>
                     <option value="~FLL#">FLL (Fill Dim White)</option>
+                    <option value="~SAR010203040506070809000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000#">SAR Palette Test (Row 1)</option>
                     <option value="~TLO181,r000g255b000,1#">TLO (Single LED + Sync Top Indicator)</option>
                     <option value="~HOTA001r255g000b000B019r000g255b000C343r000g000b255D361r255g255b255N4#">HOT (Batch 4 LEDs Corners)</option>
                 </optgroup>
@@ -211,6 +212,19 @@
     let currentBoardSize = 19; 
 
     let placeMode = 'alt', nextStone = 1;     
+
+    // Empirical 5-Color Hardware Palette
+    const EMPIRICAL_PALETTE = {
+        '1': '#2ecc71', // Emerald Green
+        '2': '#ffffff', // Cool White
+        '3': '#2ecc71', // Green Group (Indistinguishable from #1)
+        '4': '#ffffff', // White Group (Indistinguishable from #2)
+        '5': '#e74c3c', // Pure Vibrant Red
+        '6': '#e056fd', // Magenta
+        '7': '#f5af82', // Peach / Salmon (~RGB 245, 175, 130)
+        '8': '#2ecc71', // Green Group (Indistinguishable from #1)
+        '9': '#ffffff'  // White Group (Indistinguishable from #2)
+    };
 
     function logicalToPhysical(logIdx) {
         if (currentBoardSize === 19) return logIdx;
@@ -392,25 +406,26 @@
 ~GVE#       : Get FW version (Returns ~VER121#)
 ~GSV#       : Get separator config (Returns ~FJX0.32#)
 ~SEP<xx>#   : Set separator config, e.g. ~SEP32# (Returns ~SSS#)
-~ADJ#       : Calibrate Hall sensors (Returns ~AEN# after 2s, real hardware could take > 30s)
+~ADJ#       : Calibrate Hall sensors (Returns ~AEN# after 2s, hardware takes >30s)
 
 [Hardware Indicators & Warnings]
 ~LED11#     : Top Green ON, Bottom White OFF (Returns ~LOS#)
 ~LED21#     : Bottom White ON, Top Green OFF (Returns ~LOS#)
 ~LED10/20#  : Both Indicators OFF (Returns ~LOS#)
-~AWO#       : Beep-Beep audio warning (Returns ~AWO#)
+~AWO#       : Beep audio prompt (No ACK)
 
-[Full Matrix LED Rendering] *Requires 240ms Delay*
-~RGC#       : Clear ALL LEDs (Returns ~ALC#)
-~RGF#       : Clear LEDs but preserve BOD boundary (Returns ~SIC#)
-~FLL#       : Fill 19x19 with dim white base color
-~SA[L|M|W|U|N|R]<361_chars># : Matrix Write (Returns ~ALS#)
-~BOD19#     : Set board to 19/13/09, limits coordinates (Returns ~GBS#)
+[Full Matrix LED Rendering]
+~RGC#       : Clear ALL LEDs (Requires 240ms delay, returns ~ALC#)
+~RGF#       : Clear LEDs but preserve BOD boundary (Requires 240ms delay, returns ~SIC#)
+~FLL#       : Fill 19x19 with dim white (Requires 240ms delay, No ACK)
+~SAR<361>#  : Full 9-Color Matrix Write (80ms pacing, returns ~ALS#)
+~SA[L|M|W]# : Matrix Write (Colors 1 & 2 only, 80ms pacing, returns ~ALS#)
+~BOD<size># : Set board to 19/13/09 (Returns ~GBS<size>#)
 
-[Dynamic Coordinates & Single LED] (Limited by BOD boundary)
+[Dynamic Coordinates & Single LED]
 ~SHP<pos>,r<R>g<G>b<B>,1# : Single LED light up (Returns ~HCS#)
-~TLO<pos>,r<R>g<G>b<B>,<m>#: Single LED light up sycned with indicators (Returns ~TLS#)
-~HOTA<pos>r...B...C...D...N<c># : Batch 4 LEDs (Returns ~HSM#)
+~TLO<pos>,r<R>g<G>b<B>,<m>#: Single LED synced with indicators (Returns ~TLS#)
+~HOTA<pos>r...B...C...D...N<c># : Batch up to 4 LEDs (Returns ~HSM#)
 ===============================================================`;
         const line = document.createElement('div'); line.className = 'log-help'; line.textContent = helpText;
         logEl.appendChild(line); logEl.scrollTop = logEl.scrollHeight;
@@ -452,12 +467,14 @@
     function checkDelay(prefix) {
         const now = Date.now();
         if (lastCmdTime > 0) {
-            const requiredDelay = ['RGC', 'RGF', 'FLL', 'SAR', 'SAL', 'SAM', 'SAW', 'SAU', 'SAN'].includes(lastCmdPrefix) ? 240 : 80;
+            // Only RGC, RGF, FLL require the 240ms extended render delay
+            const requiredDelay = ['RGC', 'RGF', 'FLL'].includes(lastCmdPrefix) ? 240 : 80;
             if (now - lastCmdTime < requiredDelay) {
-                logWarn(`⚠️ [Delay Warning] Only ${now - lastCmdTime}ms elapsed since last command (${lastCmdPrefix}). Should be >= ${requiredDelay}ms.`);
+                logWarn(`⚠️ [Delay Warning] Only ${now - lastCmdTime}ms elapsed since last command (${lastCmdPrefix}). Expected >= ${requiredDelay}ms.`);
             }
         }
-        lastCmdTime = now; lastCmdPrefix = prefix;
+        lastCmdTime = now; 
+        lastCmdPrefix = prefix;
     }
 
     function handleDynamicSingleLED(logicalPosStr, r, g, b, isHOT = false) {
@@ -476,7 +493,7 @@
 
     function processCommand(cmd) {
         logTTY(cmd, 'rx');
-        const match = cmd.match(/^~([A-Z]{3})(.*)#$/);
+        const match = cmd.match(/^~?([A-Z]{3})([^~#]*)#?$/);
         if (!match) return;
 
         let prefix = match[1], payload = match[2];
@@ -530,11 +547,23 @@
         }
         else if (['SAR', 'SAL', 'SAM', 'SAW', 'SAU', 'SAN'].includes(prefix)) {
             document.querySelectorAll('.led').forEach(el => { el.className = 'led'; });
-            const colorMap = { '1':'#00ff00', '2':'#ffffff', '3':'#ff0000', '4':'#0000ff', '5':'#ffff00', '6':'#ff00ff', '7':'#00ffff', '8':'#ff8800', '9':'#888888' };
+            const isSAR = (prefix === 'SAR');
+            
             for (let i = 0; i < 361 && i < payload.length; i++) {
-                if (payload[i] !== '0' && colorMap[payload[i]]) {
-                    const led = document.getElementById(`led-${i}`);
-                    if (led) { led.classList.add('led-glow'); led.style.setProperty('--led-color', colorMap[payload[i]]); }
+                const colorIdx = payload[i];
+                if (colorIdx !== '0') {
+                    // Physical hardware constraint: SAL/SAM/SAW only render indices 1 & 2
+                    if (!isSAR && colorIdx !== '1' && colorIdx !== '2') {
+                        continue;
+                    }
+                    const colorHex = EMPIRICAL_PALETTE[colorIdx];
+                    if (colorHex) {
+                        const led = document.getElementById(`led-${i}`);
+                        if (led) { 
+                            led.classList.add('led-glow'); 
+                            led.style.setProperty('--led-color', colorHex); 
+                        }
+                    }
                 }
             }
             sendHardwareData('~ALS#');
@@ -553,7 +582,7 @@
                             if (r === -1 || r === bound || c === -1 || c === bound) {
                                 let phys = (r + offset) * 19 + (c + offset);
                                 let led = document.getElementById(`led-${phys}`);
-                                if(led) { led.classList.add('led-glow', 'bod-lit'); led.style.setProperty('--led-color', '#00ff00'); }
+                                if(led) { led.classList.add('led-glow', 'bod-lit'); led.style.setProperty('--led-color', '#2ecc71'); }
                             }
                         }
                     }
@@ -561,11 +590,28 @@
                 sendHardwareData(`~GBS${payload}#`); 
             }
         }
-        else if (prefix === 'AWO') { playDoubleBeep(); sendHardwareData('~AWO#'); }
-        else if (prefix === 'AWT' || prefix === 'AWS') { /* do nothing */ }
-        else if (prefix === 'RLT') { animateShape(arrRLT, '#0f0'); sendHardwareData(`~DSC#`); }
-        else if (prefix === 'RLW') { animateShape(arrRLW, '#f00'); sendHardwareData(`~DSC#`); }
-        else if (prefix === 'RLO') { animateShape(arrRLO, '#0f0'); sendHardwareData(`~DSC#`); }
+        else if (prefix === 'AWO') { 
+            playDoubleBeep(); 
+            // AWO is fire-and-forget on physical hardware; no ACK is returned.
+        }
+        else if (prefix === 'AWT' || prefix === 'AWS') { /* Fire-and-forget */ }
+        else if (prefix === 'RLT') { animateShape(arrRLT, '#2ecc71'); sendHardwareData(`~DSC#`); }
+        else if (prefix === 'RLW') { animateShape(arrRLW, '#e74c3c'); sendHardwareData(`~DSC#`); }
+        else if (prefix === 'RLO') { animateShape(arrRLO, '#2ecc71'); sendHardwareData(`~DSC#`); }
+    }
+
+    function dispatchStream(streamData) {
+        // Unpacks single or multiple concatenated packets (~CMD1#~CMD2#)
+        const regex = /~?[A-Z]{3}[^~#]*#/g;
+        let match;
+        let found = false;
+        while ((match = regex.exec(streamData)) !== null) {
+            found = true;
+            processCommand(match[0]);
+        }
+        if (!found && streamData.trim()) {
+            processCommand(streamData.trim());
+        }
     }
 
     function insertCmd(cmd) { inputEl.value = cmd; inputEl.focus(); }
@@ -587,13 +633,18 @@
         insertCmd(`~SHP${posStr},r${r}g${g}b${b},1#`); sendInputCmd();
     }
 
-    function sendInputCmd() { if(inputEl.value) { processCommand(inputEl.value.trim()); inputEl.value = ''; } }
+    function sendInputCmd() { 
+        if(inputEl.value) { 
+            dispatchStream(inputEl.value.trim()); 
+            inputEl.value = ''; 
+        } 
+    }
 
     const COMMANDS = [
         '~STA#', '~CTS1#', '~CTS0#', '~RGC#', '~RGF#', '~FLL#',
         '~BOD19#', '~BOD13#', '~BOD09#', '~GVE#', '~GSV#', '~SEP32#', '~ADJ#',
         '~LED11#', '~LED10#', '~LED21#', '~LED20#', 
-        '~AWO#', '~AWS#', '~AWT#', '~RLW#', '~RLO#', '~RLT#', '~TLO', '~HOT'
+        '~AWO#', '~AWS#', '~AWT#', '~RLW#', '~RLO#', '~RLT#', '~TLO', '~HOT', '~SAR'
     ];
     let tabMatches = [], tabIdx = -1;
     
@@ -624,10 +675,22 @@
     };
     bindButton('btn-top', '~BKY#', '~BTK#'); bindButton('btn-bottom', '~WKY#', '~WTK#');
 
+    let wsBuffer = '';
     function connectWS() {
         ws = new WebSocket(document.getElementById('ws-url').value);
         ws.onopen = () => { document.getElementById('ws-status').textContent = 'Connected'; document.getElementById('ws-status').style.color = '#2ecc71'; };
-        ws.onmessage = (e) => { processCommand(e.data); };
+        ws.onmessage = (e) => { 
+            wsBuffer += e.data;
+            const regex = /~?[A-Z]{3}[^~#]*#/g;
+            let match;
+            while ((match = regex.exec(wsBuffer)) !== null) {
+                processCommand(match[0]);
+            }
+            const lastHash = wsBuffer.lastIndexOf('#');
+            if (lastHash !== -1) {
+                wsBuffer = wsBuffer.substring(lastHash + 1);
+            }
+        };
         ws.onclose = () => { document.getElementById('ws-status').textContent = 'Offline'; document.getElementById('ws-status').style.color = '#e74c3c'; ws = null; };
     }
 
