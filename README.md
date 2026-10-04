@@ -34,7 +34,7 @@ Ideal for local development without the physical board. Your app communicates wi
 Ideal for testing PC-based or Web-based applications directly against the physical hardware over your local network.
 
 #### Method 1: The IzisBridge Android App (Recommended)
-[IZISBridge](https://github.com/wjchen-vlsi/IZISBridge) includes a pre-built Android application in the releases section (`app-debug.apk`). Sideloading this app onto the board provides a UI-driven way to expose `/dev/ttyS1` over TCP without needing shell access. Source code is located in [`IZISBridge`](IZISBridge).
+[IZISBridge](https://github.com/wjchen-vlsi/IZISBridge) includes a pre-built Android application in the releases section (`app-debug.apk`). Sideloading this app onto the board provides a UI-driven way to expose `/dev/ttyS1` over TCP without needing shell access.
 
 1. Install `app-debug.apk` via USB flash drive or Wireless ADB.
 2. Open the app on the Izis Smart Go Board.
@@ -104,7 +104,7 @@ An asynchronous **TCP-to-WebSocket Bridge Script** written in Python.
 *   **Purpose:** Bridges communication between a TCP client (Android app, test script, or AI engine) and the HTML simulator via WebSockets.
 *   **Usage:** Run with `python izis_simulator_bridge.py`. Listens on TCP port `5000` (for apps/scripts) and WebSocket port `8080` (for the browser simulator). Handles frame delimitation (`~...#`) and stream fragmentation automatically.
 
-### 4. [`IZISBridge`](IZISBridge)
+### 4. [`IZISBridge`](https://github.com/wjchen-vlsi/IZISBridge)
 A lightweight **Android Serial-to-TCP Forwarder App** (`cn.izis.izisbridge`).
 *   Runs directly on the Izis board to expose `/dev/ttyS1` over a local TCP socket.
 *   Features thread-safe single-client handling, automated local IPv4 resolution, and real-time rolling traffic monitors for inbound and outbound packets.
