@@ -1,0 +1,1083 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Izis simulator - board model tests</title>
+</head>
+<body>
+<pre id="result"></pre>
+<script src="izis_board_model.js"></script>
+<script>
+    const tests = [];
+    function test(name, fn) { tests.push({ name, fn }); }
+
+    function same(actual, expected) {
+        const a = JSON.stringify(actual), e = JSON.stringify(expected);
+        if (a !== e) throw new Error(`expected ${e}, got ${a}`);
+    }
+
+    function board(random = () => 0.5) {
+        let clock = 0;
+        const model = new BoardModel({ random });
+        return {
+            model,
+            send(frame) { clock += 1000; return model.receive(frame, clock).replies; },
+            place(index, color) { clock += 1000; return model.setStone(index, color, clock); },
+        };
+    }
+
+    const OFF = [0, 0, 0];
+    const TOP = [0, 30, 0];
+    const BOTTOM = [10, 10, 10];
+    const FRAME = [5, 26, 4];
+    const isLit = (rgb) => rgb.some((v) => v > 0);
+    const litIndices = (model) => model.state.leds.flatMap((rgb, i) => (isLit(rgb) ? [i] : []));
+    const litPoints = (model) => litIndices(model).length;
+    const sda = (digits) => `~SDA${digits}#`;
+    const zeros = (n) => '0'.repeat(n);
+    const pad = (n, width) => String(n).padStart(width, '0');
+    const ascending = (list) => [...list].sort((a, b) => a - b);
+    const snapshot = (model) => JSON.stringify(model.state);
+
+    function range(from, to, step) {
+        const out = [];
+        for (let p = from; p <= to; p += step) out.push(p);
+        return out;
+    }
+
+    function matrix(code, cells = {}) {
+        const digits = new Array(361).fill('0');
+        for (const [index, digit] of Object.entries(cells)) digits[index] = digit;
+        return `~${code}${digits.join('')}#`;
+    }
+
+    function point(command, position, [r, g, b], mode = 1) {
+        return `~${command}${pad(position, 3)},r${pad(r, 3)}g${pad(g, 3)}b${pad(b, 3)},${mode}#`;
+    }
+
+    function hot(points, count) {
+        const segments = ['A', 'B', 'C', 'D'].map((letter, i) => {
+            const [position, r, g, b] = points[i] ?? points[0];
+            return `${letter}${pad(position, 3)}r${pad(r, 3)}g${pad(g, 3)}b${pad(b, 3)}`;
+        });
+        return `~HOT${segments.join('')}N${count}#`;
+    }
+
+    const PALETTES = {
+        SAR: { 1: [0, 150, 0], 2: [50, 50, 50], 3: [0, 70, 0], 4: [40, 40, 70], 5: [255, 0, 0], 6: [238, 20, 147], 7: [255, 110, 180], 8: [0, 80, 80], 9: [33, 33, 24] },
+        SAL: { 1: [0, 70, 0], 2: [40, 40, 70] },
+        SAM: { 1: [0, 68, 0], 2: [45, 45, 45] },
+        SAW: { 1: [0, 45, 0], 2: [30, 30, 30] },
+    };
+    const TICK_POINTS = [129, 147, 165, 183, 201, 181, 161, 141, 121, 101, 81, 61];
+    const CROSS_POINTS = [...range(90, 234, 18), ...range(82, 242, 20)];
+
+    test('sta_reply_matches_the_size', () => {
+        const sizes = [[19, '~BOD19#', 0, 360], [13, '~BOD13#', 60, 300], [9, '~BOD09#', 100, 260]];
+        for (const [size, bod, first, last] of sizes) {
+            const { model, send, place } = board();
+            send(bod);
+            same(model.state.size, size);
+            same(send('~STA#'), [sda(zeros(size * size))]);
+            place(first, 1);
+            place(last, 2);
+            if (size < 19) place(0, 1);
+            same(send('~STA#'), [sda('1' + zeros(size * size - 2) + '2')]);
+        }
+    });
+
+    test('bod_9_13_19', () => {
+        const { model, send } = board();
+        const cases = [['~BOD09#', '~GBS09#', 9, 40], ['~BOD13#', '~GBS13#', 13, 56], ['~BOD19#', '~GBS19#', 19, 0]];
+        for (const [frame, reply, size, frameLeds] of cases) {
+            same(send(frame), [reply]);
+            same(model.state.size, size);
+            same(litPoints(model), frameLeds);
+        }
+        send('~BOD09#');
+        same(isLit(model.state.leds[80]), true);
+        same(isLit(model.state.leds[100]), false);
+        same(send('~BOD14#'), []);
+        same(model.state.size, 19);
+        same(litPoints(model), 40);
+        send('~RGC#');
+        same(send('~BOD19#'), ['~GBS19#']);
+        same(litPoints(model), 0);
+    });
+
+    test('led_switches_indicators', () => {
+        const { model, send } = board();
+        const indicators = () => [isLit(model.state.top), isLit(model.state.bottom)];
+        same(indicators(), [false, false]);
+        same(send('~LED11#'), ['~LOS#']);
+        same(indicators(), [true, false]);
+        same(send('~LED21#'), ['~LOS#']);
+        same(indicators(), [false, true]);
+        same(send('~LED10#'), ['~LOS#']);
+        same(indicators(), [false, false]);
+        send('~LED11#');
+        send('~LED20#');
+        same(indicators(), [false, false]);
+    });
+
+    test('cts_switches_auto_report', () => {
+        const { model, send, place } = board();
+        same(model.state.autoReport, true);
+        same(place(180, 1), [sda(zeros(180) + '1' + zeros(180))]);
+        same(send('~CTS0#'), ['~UDS0#']);
+        same(model.state.autoReport, false);
+        same(place(180, 2), []);
+        same(send('~CTS1#'), ['~UDS1#']);
+        same(model.state.autoReport, true);
+        same(place(180, 1), [sda(zeros(180) + '1' + zeros(180))]);
+    });
+
+    test('sizes_of_2_1', () => {
+        for (const size of [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 19]) {
+            const { model, send } = board();
+            same(send(`~BOD${pad(size, 2)}#`), [`~GBS${pad(size, 2)}#`]);
+            same(model.state.size, size);
+            const lit = litIndices(model);
+            same(lit.length, size === 19 ? 0 : 4 * (size + 1));
+            const offset = Math.floor((19 - size) / 2);
+            for (const index of lit) {
+                const row = Math.floor(index / 19) - offset, column = (index % 19) - offset;
+                const inside = row >= 0 && row < size && column >= 0 && column < size;
+                const within = row >= -1 && row <= size && column >= -1 && column <= size;
+                same(!inside && within, true);
+                same(model.state.leds[index], FRAME);
+            }
+        }
+        const thirteen = board();
+        thirteen.send('~BOD13#');
+        same([isLit(thirteen.model.state.leds[2 * 19 + 8]), isLit(thirteen.model.state.leds[16 * 19 + 8]), isLit(thirteen.model.state.leds[3 * 19 + 8])], [true, true, false]);
+        const nine = board();
+        nine.send('~BOD09#');
+        same([isLit(nine.model.state.leds[4 * 19 + 9]), isLit(nine.model.state.leds[14 * 19 + 9]), isLit(nine.model.state.leds[5 * 19 + 9])], [true, true, false]);
+        for (const bad of ['', '0', '3', '9', '14', '16', '17', '18', '20', '99', '009', '1x', 'xx']) {
+            const { model, send } = board();
+            send('~BOD09#');
+            same(send(`~BOD${bad}#`), []);
+            same(model.state.size, 19);
+            same(litPoints(model), 40);
+            same(send('~STA#'), [sda(zeros(361))]);
+            send('~RGC#');
+            same(litPoints(model), 0);
+        }
+    });
+
+    test('bsc_frame_colour', () => {
+        const { model, send } = board();
+        same(send('~BSC13R010G020B030#'), ['~GBS13#']);
+        same(model.state.size, 13);
+        same(litPoints(model), 56);
+        same(litIndices(model).every((i) => JSON.stringify(model.state.leds[i]) === '[10,20,30]'), true);
+        same(send('~BSC09x255y000z128#'), ['~GBS09#']);
+        same(model.state.size, 9);
+        same(litPoints(model), 40);
+        same(litIndices(model).every((i) => JSON.stringify(model.state.leds[i]) === '[255,0,128]'), true);
+        same(send('~BOD13#'), ['~GBS13#']);
+        same(litIndices(model).every((i) => JSON.stringify(model.state.leds[i]) === JSON.stringify(FRAME)), true);
+        same(send('~BSC19R001G002B003#'), ['~GBS19#']);
+        same(model.state.size, 19);
+        same(litPoints(model), 0);
+        send('~BOD09#');
+        same(send('~BSC14R001G002B003#'), []);
+        same(model.state.size, 19);
+        same(litPoints(model), 40);
+    });
+
+    test('indicator_colours', () => {
+        const { model, send } = board();
+        const colours = () => [model.state.top, model.state.bottom];
+        same(colours(), [OFF, OFF]);
+        same(send('~LED11#'), ['~LOS#']);
+        same(colours(), [TOP, OFF]);
+        same(send('~LED21#'), ['~LOS#']);
+        same(colours(), [OFF, BOTTOM]);
+        same(send('~LED11#'), ['~LOS#']);
+        same(colours(), [TOP, OFF]);
+        same(send('~LED10#'), ['~LOS#']);
+        same(colours(), [OFF, OFF]);
+        send('~LED21#');
+        same(send('~LED20#'), ['~LOS#']);
+        same(colours(), [OFF, OFF]);
+    });
+
+    test('glc_any_colour', () => {
+        const { model, send } = board();
+        const colours = () => [model.state.top, model.state.bottom];
+        same(send('~GLC1R255G000B000#'), ['~LOS#']);
+        same(colours(), [[255, 0, 0], OFF]);
+        same(send('~GLC2R001G002B003#'), ['~LOS#']);
+        same(colours(), [[255, 0, 0], [1, 2, 3]]);
+        same(send('~GLC1r000g030b000#'), ['~LOS#']);
+        same(colours(), [TOP, [1, 2, 3]]);
+        same(send('~GLC2R010G010B010#'), ['~LOS#']);
+        same(colours(), [TOP, BOTTOM]);
+        send('~GLC1R100G200B050#');
+        send('~LED21#');
+        same(colours(), [OFF, BOTTOM]);
+        send('~GLC1R100G200B050#');
+        send('~GLC2R100G200B050#');
+        same(send('~LED10#'), ['~LOS#']);
+        same(colours(), [OFF, OFF]);
+        send('~GLC1R100G200B050#');
+        same(send('~GLC3R255G255B255#'), ['~LOS#']);
+        same(send('~GLC0R255G255B255#'), ['~LOS#']);
+        same(colours(), [[100, 200, 50], OFF]);
+    });
+
+    test('palettes_per_tier', () => {
+        for (const [code, palette] of Object.entries(PALETTES)) {
+            const { model, send } = board();
+            const cells = {};
+            for (let digit = 1; digit <= 9; digit++) cells[100 + digit] = String(digit);
+            same(send(matrix(code, cells)), ['~ALS#']);
+            for (let digit = 1; digit <= 9; digit++) same(model.state.leds[100 + digit], palette[digit] ?? OFF);
+            same(litPoints(model), Object.keys(palette).length);
+        }
+    });
+
+    test('two_colour_tiers_keep_3_to_9', () => {
+        for (const code of ['SAL', 'SAM', 'SAW']) {
+            const { model, send } = board();
+            send('~FLL#');
+            const cells = { 110: '0', 111: '1', 112: '2' };
+            for (let digit = 3; digit <= 9; digit++) cells[100 + digit] = String(digit);
+            same(send(matrix(code, cells)), ['~ALS#']);
+            for (let digit = 3; digit <= 9; digit++) same(model.state.leds[100 + digit], [15, 15, 15]);
+            same(model.state.leds[110], OFF);
+            same(model.state.leds[111], PALETTES[code][1]);
+            same(model.state.leds[112], PALETTES[code][2]);
+            same(model.state.leds[0], OFF);
+        }
+        const { model, send } = board();
+        send('~FLL#');
+        send(matrix('SAR', { 103: '3', 109: '9' }));
+        same([model.state.leds[103], model.state.leds[109]], [PALETTES.SAR[3], PALETTES.SAR[9]]);
+    });
+
+    test('matrix_in_19x19_order', () => {
+        const { model, send } = board();
+        send('~BOD09#');
+        same(litPoints(model), 40);
+        same(send(matrix('SAR', { 80: '1', 0: '5', 360: '5' })), ['~ALS#']);
+        same(litIndices(model), [0, 80, 360]);
+        same([model.state.leds[0], model.state.leds[80], model.state.leds[360]], [[255, 0, 0], [0, 150, 0], [255, 0, 0]]);
+        same(send('~STA#'), [sda(zeros(81))]);
+        const before = snapshot(model);
+        for (const frame of [`~SAR${'1'.repeat(360)}#`, `~SAR${'1'.repeat(362)}#`, `~SAR${'x'.repeat(361)}#`, '~SAR#']) {
+            same(send(frame), []);
+            same(snapshot(model), before);
+        }
+    });
+
+    test('shp_tlo_share_one_point', () => {
+        const { model, send } = board();
+        same(send(point('SHP', 19, [255, 0, 0])), ['~HCS#']);
+        same(litIndices(model), [18]);
+        same(model.state.leds[18], [255, 0, 0]);
+        same(send(point('TLO', 25, [0, 255, 0], 0)), ['~TLS#']);
+        same(litIndices(model), [24]);
+        same(model.state.leds[24], [0, 255, 0]);
+        same(send(point('SHP', 30, [0, 0, 255])), ['~HCS#']);
+        same(litIndices(model), [29]);
+        send(hot([[30, 255, 255, 255]], 1));
+        same(model.state.leds[29], [255, 255, 255]);
+        send(point('SHP', 31, [1, 2, 3]));
+        same(litIndices(model), [30]);
+        send(point('SHP', 41, [9, 9, 9]));
+        send(matrix('SAR', { 40: '1' }));
+        same(model.state.leds[40], [0, 150, 0]);
+        send(point('TLO', 42, [4, 5, 6], 1));
+        same(litIndices(model), [41]);
+        send(hot([[100, 7, 7, 7]], 1));
+        send(point('SHP', 50, [8, 8, 8]));
+        same(litIndices(model), [49, 99]);
+        send('~LED11#');
+        send(point('SHP', 51, [8, 8, 8], 9));
+        same([model.state.top, model.state.bottom], [TOP, OFF]);
+        same(litIndices(model), [50, 99]);
+    });
+
+    test('tlo_modes', () => {
+        const cases = [['0', OFF, OFF], ['1', TOP, OFF], ['2', OFF, BOTTOM], ['3', TOP, BOTTOM]];
+        for (const [mode, top, bottom] of cases) {
+            const { model, send } = board();
+            send('~GLC1R200G200B200#');
+            send('~GLC2R200G200B200#');
+            same(send(point('TLO', 19, [255, 0, 0], mode)), ['~TLS#']);
+            same([model.state.top, model.state.bottom], [top, bottom]);
+            same(model.state.leds[18], [255, 0, 0]);
+        }
+        for (const other of ['4', '9', 'x']) {
+            const lit = board();
+            lit.send(point('TLO', 19, [0, 0, 0], 3));
+            lit.send(point('TLO', 19, [0, 0, 0], other));
+            same([lit.model.state.top, lit.model.state.bottom], [TOP, BOTTOM]);
+            const custom = board();
+            custom.send('~GLC1R001G002B003#');
+            custom.send(point('TLO', 19, [0, 0, 0], other));
+            same([custom.model.state.top, custom.model.state.bottom], [[1, 2, 3], OFF]);
+        }
+    });
+
+    test('fixed_position_fields', () => {
+        const padded = board();
+        padded.send('~SHP019,r255g000b000,1#');
+        same(padded.model.state.leds[18], [255, 0, 0]);
+        const short = board();
+        same(short.send('~SHP19,r255g000b000,1#'), ['~HCS#']);
+        same(litIndices(short.model), [18]);
+        same(short.model.state.leds[18], [55, 0, 0]);
+        const tlo = board();
+        tlo.send('~LED11#');
+        tlo.send('~LED21#');
+        tlo.send('~GLC1R010G010B010#');
+        same(tlo.send('~TLO19,r000g255b000,2#'), ['~TLS#']);
+        same([tlo.model.state.top, tlo.model.state.bottom], [OFF, OFF]);
+        same(litIndices(tlo.model), [18]);
+        same(tlo.model.state.leds[18], [0, 55, 0]);
+        const clamped = board();
+        clamped.send('~SHP019,r999g256b255,1#');
+        same(clamped.model.state.leds[18], [255, 255, 255]);
+        const bare = board();
+        bare.send(point('SHP', 19, [255, 0, 0]));
+        same(bare.send('~SHP#'), []);
+        same(litPoints(bare.model), 0);
+        same(bare.send('~TLO#'), []);
+    });
+
+    test('no_range_check', () => {
+        const { model, send } = board();
+        send('~BOD13#');
+        same(send('~SHP181,r255g000b000,1#'), ['~HCS#']);
+        same(model.state.leds[16 * 19 + 14], [255, 0, 0]);
+        send('~SHP001,r000g255b000,1#');
+        same(model.state.leds[3 * 19 + 3], [0, 255, 0]);
+        send(hot([[181, 0, 0, 255]], 1));
+        same(model.state.leds[16 * 19 + 14], [0, 0, 255]);
+        const full = board();
+        for (const position of [362, 500, 999, 0]) {
+            same(full.send(point('SHP', position, [255, 0, 0])), ['~HCS#']);
+            same(litPoints(full.model), 0);
+        }
+        same(full.send(point('SHP', 361, [255, 0, 0])), ['~HCS#']);
+        same(litIndices(full.model), [360]);
+    });
+
+    test('hota_complete_and_short', () => {
+        const example = '~HOTA001r255g000b000B019r000g255b000C001r000g000b000D001r000g000b000N2#';
+        same(hot([[1, 255, 0, 0], [19, 0, 255, 0], [1, 0, 0, 0], [1, 0, 0, 0]], 2), example);
+        same(example.slice(4, -1).length, 66);
+        const { model, send } = board();
+        same(send(example), ['~HSM#']);
+        same(litIndices(model), [0, 18]);
+        same([model.state.leds[0], model.state.leds[18]], [[255, 0, 0], [0, 255, 0]]);
+        const four = board();
+        four.send(hot([[1, 255, 0, 0], [19, 0, 255, 0], [343, 0, 0, 255], [361, 255, 255, 255]], 4));
+        same(litIndices(four.model), [0, 18, 342, 360]);
+        const one = board();
+        one.send(hot([[1, 255, 0, 0], [19, 0, 255, 0], [343, 0, 0, 255], [361, 255, 255, 255]], 1));
+        same(litIndices(one.model), [0]);
+        for (const [count, drawn] of [[5, 4], [9, 4], [0, 0], ['x', 0]]) {
+            const counted = board();
+            counted.send('~FLL#');
+            counted.send(hot([[1, 255, 0, 0], [19, 0, 255, 0], [343, 0, 0, 255], [361, 255, 255, 255]], count));
+            same(counted.model.state.leds.filter((rgb) => JSON.stringify(rgb) !== '[15,15,15]').length, drawn);
+            same(counted.model.state.leds[4], [15, 15, 15]);
+        }
+        const keep = board();
+        keep.send(point('SHP', 100, [5, 5, 5]));
+        keep.send(hot([[1, 255, 0, 0]], 1));
+        same(litIndices(keep.model), [0, 99]);
+        keep.send(point('SHP', 101, [6, 6, 6]));
+        same(litIndices(keep.model), [0, 100]);
+
+        const short = '~HOTA183r000g000b255N1#';
+        const fresh = board();
+        same(fresh.send(short), ['~HSM#']);
+        same(litPoints(fresh.model), 0);
+        const again = board();
+        again.send(example);
+        again.send('~RGC#');
+        same(litPoints(again.model), 0);
+        same(again.send(short), ['~HSM#']);
+        same(litIndices(again.model), [0, 18]);
+        again.send(hot([[50, 1, 2, 3]], 1));
+        again.send('~RGC#');
+        same(again.send(short), ['~HSM#']);
+        same(litIndices(again.model), [49]);
+        same(again.send(example.slice(0, -3) + '#'), ['~HSM#']);
+    });
+
+    test('pictures_mix_and_stay', () => {
+        const { model, send } = board();
+        send(point('SHP', 129, [255, 255, 255]));
+        same(send('~RLT#'), ['~DSC#']);
+        same(litIndices(model), ascending(TICK_POINTS.map((p) => p - 1)));
+        for (const p of TICK_POINTS) same(model.state.leds[p - 1], p === 129 ? [255, 100, 255] : [0, 100, 0]);
+        send('~LED11#');
+        send('~STA#');
+        send('~GSV#');
+        same(litPoints(model), 12);
+        send(matrix('SAR'));
+        same(litPoints(model), 0);
+
+        const red = board();
+        red.send('~FLL#');
+        same(red.send('~RLW#'), ['~DSC#']);
+        same(red.model.state.leds[89], [100, 15, 15]);
+        same(red.model.state.leds[0], [15, 15, 15]);
+        same(CROSS_POINTS.length, 18);
+        for (const p of CROSS_POINTS) same(red.model.state.leds[p - 1], [100, 15, 15]);
+        same(litPoints(red.model), 361);
+        red.send('~RGC#');
+        same(litPoints(red.model), 0);
+
+        const cross = board();
+        cross.send('~RLW#');
+        same(litIndices(cross.model), ascending([...new Set(CROSS_POINTS)].map((p) => p - 1)));
+        same(cross.model.state.leds[161], [100, 0, 0]);
+        cross.send(point('SHP', 162, [1, 2, 3]));
+        same(cross.model.state.leds[161], [1, 2, 3]);
+
+        const circle = board();
+        same(circle.send('~RLO#'), ['~DSC#']);
+        same(litPoints(circle.model) > 0, true);
+        same(litIndices(circle.model).every((i) => JSON.stringify(circle.model.state.leds[i]) === '[0,100,0]'), true);
+    });
+
+    test('fll_rgc_rgf', () => {
+        const { model, send } = board();
+        send('~BOD13#');
+        same(send('~FLL#'), []);
+        same(litPoints(model), 361);
+        same(model.state.leds.every((rgb) => JSON.stringify(rgb) === '[15,15,15]'), true);
+        same(send('~RGC#'), ['~ALC#']);
+        same(litPoints(model), 0);
+
+        const inner = board();
+        inner.send('~BOD13#');
+        inner.send('~FLL#');
+        inner.send(point('SHP', 181, [255, 0, 0]));
+        same(inner.send('~RGF#'), ['~SIC#']);
+        same(litPoints(inner.model), 56);
+        same(inner.model.state.leds[16 * 19 + 14], [255, 0, 0]);
+        same(inner.model.state.leds[2 * 19 + 5], [15, 15, 15]);
+        same(inner.model.state.leds[8 * 19 + 8], OFF);
+        same(inner.model.state.leds[0], OFF);
+
+        const plain = board();
+        plain.send('~BOD13#');
+        plain.send(hot([[85, 1, 1, 1]], 1));
+        plain.send('~RGF#');
+        same(litPoints(plain.model), 56);
+        same(plain.model.state.leds[2 * 19 + 5], FRAME);
+        const full = board();
+        full.send('~FLL#');
+        same(full.send('~RGF#'), ['~SIC#']);
+        same(litPoints(full.model), 0);
+    });
+
+    test('long_unknown_and_3_9_frames_silent', () => {
+        const { model, send } = board();
+        send('~BOD13#');
+        send('~LED11#');
+        send(hot([[85, 1, 2, 3]], 1));
+        const before = snapshot(model);
+        const frames = [
+            '~CAL#', '~QDB001,r255g000b000,1#', '~RGW#', matrix('SAU', { 100: '1' }), matrix('SAN', { 100: '1' }),
+            '~AWS#', '~AWT#', '~SJD001#', '~SCS001#', '~XYZ#', '~ABC123#',
+            `~STA${'x'.repeat(367)}#`, `~SAR${'1'.repeat(367)}#`, `~BOD13${'x'.repeat(365)}#`, `~LED21${'1'.repeat(400)}#`,
+        ];
+        for (const frame of frames) {
+            same(send(frame), []);
+            same(snapshot(model), before);
+        }
+        const edge = board();
+        same(edge.send(`~STA${'x'.repeat(366)}#`), [sda(zeros(361))]);
+        same(edge.send(`~STA${'x'.repeat(367)}#`), []);
+    });
+
+    test('read_only_queries', () => {
+        const { model, send, place } = board();
+        place(4, 1);
+        place(6, 2);
+        const before = snapshot(model);
+        same(send('~GSV#'), ['~FJX0.32#']);
+        same(send('~GBS#'), ['~BHZ255#']);
+        same(send('~GVE#'), ['~VER121#']);
+        const replies = send('~REQ#');
+        same(replies.length, 1);
+        const frame = replies[0];
+        same(frame.startsWith('~DAT1b1.5w1.5,2b1.5w1.5,'), true);
+        same(frame.endsWith(',361b1.5w1.5#'), true);
+        const entries = frame.slice(4, -1).split(',');
+        same(entries.length, 361);
+        same([entries[0], entries[4], entries[5], entries[6]], ['1b1.5w1.5', '5b0.4w0.4', '6b1.5w1.5', '7b2.5w2.5']);
+        same(snapshot(model), before);
+        send('~BOD13#');
+        same(send('~REQ#')[0].slice(4, -1).split(',').length, 361);
+    });
+
+    test('auto_report_pauses', () => {
+        const triggers = [
+            '~BOD13#', '~BSC13R005G026B004#', '~BSC19R005G026B004#', matrix('SAR'), matrix('SAL'), matrix('SAM'), matrix('SAW'),
+            '~RLT#', '~RLW#', '~RLO#', '~AWO#',
+        ];
+        for (const trigger of triggers) {
+            const model = new BoardModel();
+            model.receive('~CTS1#', 0);
+            model.receive(trigger, 1000);
+            same(model.setStone(180, 1, 1100), []);
+            same(model.setStone(181, 2, 1134), []);
+            same(model.tick(1134), []);
+            const reports = model.tick(1135);
+            same(reports.length, 1);
+            same(reports[0].includes('12'), true);
+            same(reports, model.receive('~STA#', 1136).replies);
+            same(model.tick(1500), []);
+            same(model.setStone(182, 1, 2000).length, 1);
+        }
+        const free = ['~BOD19#', '~BOD14#', '~STA#', '~LED11#', '~CTS1#', matrix('SAU'), '~CAL#'];
+        for (const frame of free) {
+            const model = new BoardModel();
+            model.receive('~CTS1#', 0);
+            model.receive(frame, 1000);
+            same(model.setStone(180, 1, 1001).length, 1);
+        }
+        const off = new BoardModel();
+        off.receive('~CTS0#', 0);
+        off.receive('~BOD13#', 1000);
+        same(off.setStone(180, 1, 1050), []);
+        same(off.tick(1200), []);
+        const cut = new BoardModel();
+        cut.receive('~CTS1#', 0);
+        cut.receive('~BOD13#', 1000);
+        cut.setStone(180, 1, 1050);
+        cut.receive('~CTS0#', 1060);
+        same(cut.tick(1200), []);
+        const extended = new BoardModel();
+        extended.receive('~CTS1#', 0);
+        extended.receive('~AWO#', 1000);
+        extended.receive('~RLT#', 1100);
+        extended.setStone(180, 1, 1120);
+        same(extended.tick(1234), []);
+        same(extended.tick(1235).length, 1);
+    });
+
+    test('unchanged_stone_reports_nothing', () => {
+        const model = new BoardModel();
+        model.receive('~CTS1#', 0);
+        same(model.setStone(180, 1, 1000).length, 1);
+        same(model.setStone(180, 1, 2000), []);
+        same(model.clearStones(3000).length, 1);
+        same(model.clearStones(4000), []);
+        same(model.setStone(180, 0, 5000), []);
+    });
+
+    test('buttons_timing', () => {
+        const model = new BoardModel();
+        same(model.pressButton('top', 0, 100), []);
+        same(model.tick(299), []);
+        same(model.tick(300), ['~BKY#']);
+        same(model.pressButton('bottom', 1000, 1100), []);
+        same(model.tick(1300), ['~WKY#']);
+        same(model.pressButton('top', 2000, 3199), []);
+        same(model.tick(3399), ['~BKY#']);
+        same(model.pressButton('top', 4000, 5200), []);
+        same(model.tick(5400), ['~BTK#']);
+        same(model.pressButton('bottom', 6000, 7199), []);
+        same(model.tick(7399), ['~WKY#']);
+        same(model.pressButton('bottom', 8000, 9200), []);
+        same(model.tick(9400), ['~WTK#']);
+        same(model.pressButton('top', 10000, 11500), []);
+        same(model.tick(11700), ['~BTK#']);
+        same(model.pressButton('top', 12000, 13000), []);
+        same(model.tick(13200), ['~BKY#']);
+        same(model.pressButton('nothing', 0, 5000), []);
+
+        same(model.pressButton('top', 20000, 20100), []);
+        same(model.pressButton('top', 20299, 20399), ['~BKY#']);
+        same(model.tick(21000), []);
+
+        same(model.pressButton('top', 30000, 30100), []);
+        same(model.pressButton('top', 30300, 30400), ['~BKY#']);
+        same(model.tick(30599), []);
+        same(model.tick(30600), ['~BKY#']);
+
+        same(model.pressButton('bottom', 40000, 40100), []);
+        same(model.pressButton('bottom', 40200, 41700), ['~WKY#']);
+        same(model.tick(42000), []);
+
+        same(model.pressButton('top', 50000, 50100), []);
+        same(model.pressButton('bottom', 50150, 50250), []);
+        same(model.tick(50300), ['~BKY#']);
+        same(model.tick(50450), ['~WKY#']);
+    });
+
+    test('button_hooks_in_real_time', () => {
+        const polled = (model, from, to, step = 50) => {
+            const frames = [];
+            for (let at = from; at <= to; at += step) frames.push(...model.tick(at));
+            return frames;
+        };
+
+        const second = new BoardModel();
+        same(second.buttonDown('top', 1000), []);
+        same(second.buttonUp('top', 1100), []);
+        same(polled(second, 1100, 1240), []);
+        same(second.buttonDown('top', 1250), []);
+        same(polled(second, 1250, 1400), []);
+        same(second.buttonUp('top', 1450), ['~BKY#']);
+        same(polled(second, 1450, 3000), []);
+
+        const held = new BoardModel();
+        held.buttonDown('bottom', 0);
+        held.buttonUp('bottom', 100);
+        same(polled(held, 100, 140), []);
+        same(held.buttonDown('bottom', 150), []);
+        same(polled(held, 150, 1600), []);
+        same(held.buttonUp('bottom', 1650), ['~WKY#']);
+        same(polled(held, 1650, 3000), []);
+
+        const longFirst = new BoardModel();
+        longFirst.buttonDown('top', 0);
+        same(longFirst.buttonUp('top', 1300), []);
+        same(longFirst.buttonDown('top', 1450), []);
+        same(polled(longFirst, 1450, 1500), []);
+        same(longFirst.buttonUp('top', 1550), ['~BKY#']);
+        same(polled(longFirst, 1550, 3000), []);
+
+        const apart = new BoardModel();
+        apart.buttonDown('top', 0);
+        apart.buttonUp('top', 100);
+        same(polled(apart, 100, 299), []);
+        same(apart.tick(300), ['~BKY#']);
+        same(apart.buttonDown('top', 350), []);
+        same(polled(apart, 350, 400), []);
+        same(apart.buttonUp('top', 450), []);
+        same(polled(apart, 450, 649), []);
+        same(apart.tick(650), ['~BKY#']);
+
+        const long = new BoardModel();
+        long.buttonDown('bottom', 0);
+        same(polled(long, 0, 1199), []);
+        same(long.buttonUp('bottom', 1200), []);
+        same(polled(long, 1200, 1399), []);
+        same(long.tick(1400), ['~WTK#']);
+
+        const other = new BoardModel();
+        other.buttonDown('top', 0);
+        other.buttonUp('top', 100);
+        same(other.buttonDown('bottom', 150), []);
+        same(polled(other, 150, 250), []);
+        same(other.buttonUp('bottom', 260), []);
+        same(polled(other, 260, 600), ['~BKY#', '~WKY#']);
+
+        const stray = new BoardModel();
+        same(stray.buttonUp('top', 100), []);
+        stray.buttonDown('top', 200);
+        same(stray.buttonDown('top', 250), []);
+        same(stray.buttonUp('top', 300), []);
+        same(stray.buttonUp('top', 350), []);
+        same(polled(stray, 300, 700), ['~BKY#']);
+        same(stray.buttonDown('nothing', 0), []);
+        same(stray.buttonUp('nothing', 10), []);
+    });
+
+    test('latency_range', () => {
+        same(new BoardModel({ random: () => 0 }).latency('~STA#'), 20);
+        same(new BoardModel({ random: () => 0.5 }).latency('~STA#'), 35);
+        same(new BoardModel({ random: () => 0.999999 }).latency('~STA#'), 50);
+        let seed = 7;
+        const model = new BoardModel({ random: () => { seed = (seed * 48271) % 2147483647; return seed / 2147483647; } });
+        for (let i = 0; i < 200; i++) {
+            const ms = model.latency('~GVE#');
+            same(Number.isInteger(ms) && ms >= 20 && ms <= 50, true);
+        }
+        for (const code of ['SAR', 'SAL', 'SAM', 'SAW']) {
+            same(new BoardModel({ random: () => 0 }).latency(matrix(code, { 5: '1' })), 140);
+            same(new BoardModel({ random: () => 0.999999 }).latency(matrix(code)), 140);
+        }
+        same(new BoardModel({ random: () => 0 }).latency('~SAR1#'), 20);
+    });
+
+    test('pacing_warning_thresholds', () => {
+        const warned = (first, gap) => {
+            const model = new BoardModel();
+            model.receive(first, 1000);
+            return typeof model.receive('~STA#', 1000 + gap).warning === 'string';
+        };
+        same([warned('~STA#', 69), warned('~STA#', 70)], [true, false]);
+        same([warned('~BOD13#', 69), warned('~BOD13#', 70)], [true, false]);
+        for (const slow of ['~RGC#', '~RGF#', '~FLL#']) same([slow, warned(slow, 229), warned(slow, 230)], [slow, true, false]);
+        same(new BoardModel().receive('~STA#', 0).warning, null);
+        const model = new BoardModel();
+        model.receive('~RGC#', 0);
+        const text = model.receive('~STA#', 100).warning;
+        same(text.includes('Expected >= 240ms'), true);
+    });
+
+    test('logical_point_of_a_physical_cell_follows_the_area', () => {
+        const at = (size, row, column) => {
+            const { model, send } = board();
+            send(`~BOD${pad(size, 2)}#`);
+            return model.logicalOf(row * 19 + column);
+        };
+        same([at(9, 5, 5), at(9, 5, 13), at(9, 13, 5), at(9, 13, 13)], [1, 9, 73, 81]);
+        same([at(9, 4, 5), at(9, 14, 13), at(9, 5, 4), at(9, 13, 14)], [null, null, null, null]);
+        same([at(4, 7, 7), at(4, 7, 10), at(4, 10, 7), at(4, 10, 10)], [1, 4, 13, 16]);
+        same([at(4, 6, 7), at(4, 11, 10), at(4, 7, 6), at(4, 10, 11)], [null, null, null, null]);
+        same([at(19, 0, 0), at(19, 18, 18)], [1, 361]);
+    });
+
+    test('screen_origin_is_the_top_left_cell_of_the_area', () => {
+        for (const size of [4, 5, 9, 12, 13, 19]) {
+            const { model, send } = board();
+            send(`~BOD${pad(size, 2)}#`);
+            const { row, column } = model.screenOrigin();
+            const inArea = (r, c) => r >= 0 && r < 19 && c >= 0 && c < 19 && model.logicalOf(r * 19 + (18 - c)) !== null;
+            same([size, inArea(row, column), inArea(row + size - 1, column + size - 1)], [size, true, true]);
+            same([size, inArea(row - 1, column), inArea(row, column - 1), inArea(row + size, column), inArea(row, column + size)], [size, false, false, false, false]);
+        }
+        const four = board();
+        four.send('~BOD04#');
+        same(four.model.screenOrigin(), { row: 7, column: 8 });
+    });
+
+    test('frame_surrounds_the_logical_area_for_every_size', () => {
+        for (const size of [4, 5, 6, 7, 8, 9, 10, 11, 12, 13]) {
+            const { model, send } = board();
+            send(`~BOD${pad(size, 2)}#`);
+            let inside = 0;
+            const lit = [];
+            for (let p = 0; p < 361; p++) {
+                if (model.logicalOf(p) !== null) inside++;
+                else if (model.state.leds[p].some(v => v !== 0)) lit.push(p);
+            }
+            same([size, inside], [size, size * size]);
+            same([size, lit.length], [size, 4 * size + 4]);
+            for (const p of lit) {
+                const near = [-20, -19, -18, -1, 1, 18, 19, 20].some(d => model.logicalOf(p + d) !== null);
+                same([size, near], [size, true]);
+            }
+        }
+    });
+
+    test('awo_beeps_without_reply', () => {
+        const { model, send } = board();
+        send('~LED11#');
+        same(send('~AWO#'), []);
+        same(model.state.beeps, 1);
+        same(send('~AWO#'), []);
+        same(model.state.beeps, 2);
+        same([model.state.top, litPoints(model)], [TOP, 0]);
+    });
+
+    test('frame_erased_by_the_next_valid_bod', () => {
+        const valid = board();
+        valid.send('~BOD09#');
+        valid.send('~FLL#');
+        valid.send('~BOD13#');
+        same(litPoints(valid.model), 321);
+        same(valid.model.state.leds[4 * 19 + 8], OFF);
+        same(valid.model.state.leds[2 * 19 + 8], FRAME);
+
+        const invalid = board();
+        invalid.send('~BOD09#');
+        invalid.send('~BOD14#');
+        invalid.send('~FLL#');
+        invalid.send('~BOD13#');
+        same(litPoints(invalid.model), 361);
+        same(invalid.model.state.leds[4 * 19 + 8], [15, 15, 15]);
+        same(invalid.model.state.leds[2 * 19 + 8], FRAME);
+
+        const over = board();
+        over.send('~BOD13#');
+        over.send(point('SHP', 181, [255, 0, 0]));
+        same(over.model.state.leds[16 * 19 + 14], [255, 0, 0]);
+        over.send('~BOD09#');
+        same(over.model.state.leds[16 * 19 + 14], OFF);
+    });
+
+    function dirtyBoard(calibrationMs) {
+        const model = new BoardModel({ calibrationMs });
+        model.receive('~CTS1#', 0);
+        model.receive('~BOD13#', 100);
+        model.receive('~LED11#', 300);
+        model.receive('~GLC2R001G002B003#', 400);
+        model.receive(point('SHP', 181, [255, 0, 0]), 500);
+        model.receive(hot([[85, 1, 2, 3]], 1), 600);
+        model.receive('~RLT#', 700);
+        model.setStone(100, 1, 710);
+        model.buttonDown('bottom', 720);
+        model.buttonUp('bottom', 725);
+        model.buttonDown('top', 730);
+        model.buttonUp('top', 735);
+        model.buttonDown('top', 740);
+        return model;
+    }
+
+    const afterStone100 = sda(zeros(100) + '1' + zeros(260));
+
+    test('power_cycle_resets_and_announces', () => {
+        const model = dirtyBoard(16000);
+        same([model.state.size, litPoints(model) > 56, model.state.top, model.state.bottom], [13, true, TOP, [1, 2, 3]]);
+        same([model.reportDue, model.pending.length, Object.keys(model.downAt).length], [true, 1, 1]);
+        const stones = [...model.state.stones];
+        model.options.frameLoss = true;
+        model.options.garbleNext = true;
+        const beeps = model.state.beeps;
+
+        same(model.powerCycle(750), []);
+        same(model.state.size, 19);
+        same(model.state.autoReport, true);
+        same(litPoints(model), 0);
+        same([model.state.top, model.state.bottom], [OFF, OFF]);
+        same(model.state.stones, stones);
+        same(model.state.beeps, beeps);
+        same(model.options, { frameLoss: true, garbleNext: true });
+        same(model.tick(835), []);
+        same(model.tick(925), []);
+        same(model.tick(16749), []);
+        model.options.garbleNext = false;
+        same(model.tick(16750), ['~GBS19#', afterStone100]);
+        same(model.tick(17000), []);
+        same(model.receive('~STA#', 17500).replies, [afterStone100]);
+        same(model.state.stones, stones);
+
+        const instant = dirtyBoard(0);
+        same(instant.powerCycle(750), ['~GBS19#', afterStone100]);
+        same(instant.powerCycle(751), ['~GBS19#', afterStone100]);
+        same(new BoardModel({ calibrationMs: 2500 }).powerCycle(0), []);
+    });
+
+    test('power_cycle_forgets_pending_work', () => {
+        const model = dirtyBoard(0);
+        model.powerCycle(750);
+        const hotShort = model.receive('~HOTA183r000g000b255N1#', 760);
+        same([hotShort.replies, hotShort.warning], [['~HSM#'], null]);
+        same(litPoints(model), 0);
+        same(model.pressButton('bottom', 770, 780), []);
+        same(model.buttonUp('top', 785), []);
+        same(model.pressButton('top', 790, 795), []);
+        same(model.setStone(101, 2, 800).length, 1);
+        same(model.tick(835), []);
+        same(model.tick(979), []);
+        same(model.tick(980), ['~WKY#']);
+        same(model.tick(995), ['~BKY#']);
+
+        model.receive('~FLL#', 1000);
+        model.receive(point('SHP', 1, [255, 0, 0]), 1300);
+        same(model.state.leds[318], [15, 15, 15]);
+        same(model.state.leds[0], [255, 0, 0]);
+        model.receive('~RGF#', 1600);
+        same(litPoints(model), 0);
+    });
+
+    test('input_ignored_while_calibrating', () => {
+        const model = new BoardModel({ calibrationMs: 16000 });
+        model.receive('~CTS1#', 0);
+        model.receive('~LED11#', 100);
+        model.powerCycle(1000);
+        for (const at of [1000, 1001, 8000, 16999]) {
+            const result = model.receive('~STA#', at);
+            same([result.replies, result.ignored, result.lost, result.warning, result.danger], [[], true, false, null, null]);
+        }
+        same(model.receive('~BOD13#', 5000).replies, []);
+        same(model.receive('~LED11#', 5100).replies, []);
+        same(model.receive('~CTS0#', 5200).replies, []);
+        same([model.state.size, model.state.autoReport, model.state.top], [19, true, OFF]);
+        same(model.pressButton('top', 6000, 6100), []);
+        same(model.tick(6400), []);
+        same(model.setStone(7, 2, 7000), []);
+        same(model.state.stones[7], 2);
+        same(model.receive('~XYZ#', 7100).warning, null);
+        same(model.receive('~RGC#', 7101).warning, null);
+        same(model.receive('~STA#', 7102).warning, null);
+        const danger = model.receive('~UPD#', 8000);
+        same([danger.replies, danger.ignored, typeof danger.danger], [[], true, 'string']);
+
+        same(model.tick(16999), []);
+        same(model.tick(17000), ['~GBS19#', sda(zeros(7) + '2' + zeros(353))]);
+        const accepted = model.receive('~STA#', 17000);
+        same([accepted.replies, accepted.ignored], [[sda(zeros(7) + '2' + zeros(353))], false]);
+        same(model.receive('~LED11#', 17200).replies, ['~LOS#']);
+        same(model.setStone(8, 1, 17300), [sda(zeros(7) + '21' + zeros(352))]);
+
+        const configured = new BoardModel();
+        configured.calibrationMs = 3000;
+        configured.powerCycle(100);
+        same(configured.receive('~STA#', 3099).replies, []);
+        same(configured.tick(3100), ['~GBS19#', sda(zeros(361))]);
+        same(configured.receive('~STA#', 3100).replies, [sda(zeros(361))]);
+
+        const edge = new BoardModel({ calibrationMs: 1000, random: () => 0 });
+        edge.options.frameLoss = true;
+        edge.powerCycle(0);
+        same(edge.receive('~STA#', 999).ignored, true);
+        const first = edge.receive('~STA#', 1000);
+        same([first.lost, first.warning, first.replies.length], [false, null, 1]);
+    });
+
+    test('garble_next_report', () => {
+        const model = new BoardModel();
+        model.receive('~CTS1#', 0);
+        same(model.options.garbleNext, false);
+        model.options.garbleNext = true;
+        same(model.receive('~GVE#', 100).replies, ['~VER121#']);
+        same(model.options.garbleNext, true);
+        same(model.setStone(180, 1, 1000), [sda(zeros(180) + '1' + zeros(179) + '?')]);
+        same(model.options.garbleNext, false);
+        same(model.setStone(181, 2, 2000), [sda(zeros(180) + '12' + zeros(179))]);
+
+        const small = new BoardModel();
+        small.receive('~BOD09#', 0);
+        small.setStone(260, 2, 10);
+        small.options.garbleNext = true;
+        same(small.receive('~STA#', 1000).replies, [sda(zeros(80) + '?')]);
+        same(small.receive('~STA#', 2000).replies, [sda(zeros(80) + '2')]);
+
+        const quiet = new BoardModel();
+        quiet.receive('~CTS0#', 0);
+        quiet.options.garbleNext = true;
+        same(quiet.setStone(5, 1, 100), []);
+        same(quiet.options.garbleNext, true);
+        quiet.receive('~REQ#', 1000);
+        same(quiet.options.garbleNext, true);
+        same(quiet.receive('~CTS1#', 2000).replies, ['~UDS1#']);
+        same(quiet.setStone(6, 1, 3000), [sda(zeros(5) + '11' + zeros(353) + '?')]);
+
+        const restart = new BoardModel({ calibrationMs: 0 });
+        restart.options.garbleNext = true;
+        same(restart.powerCycle(0), ['~GBS19#', sda(zeros(360) + '?')]);
+        same(restart.options.garbleNext, false);
+    });
+
+    test('frame_loss_follows_the_table', () => {
+        const lossy = (random) => {
+            const model = new BoardModel({ random: () => random });
+            model.options.frameLoss = true;
+            return model;
+        };
+        const second = (random, first, gap) => {
+            const model = lossy(random);
+            model.receive(first, 1000);
+            return model.receive('~STA#', 1000 + gap);
+        };
+        const short = '~GVE#';
+        const full = matrix('SAR', { 5: '1' });
+
+        const afterShort = lossy(0.25);
+        afterShort.receive(short, 1000);
+        same(afterShort.receive('~STA#', 1025).lost, true);
+        const afterShortKept = lossy(0.35);
+        afterShortKept.receive(short, 1000);
+        same(afterShortKept.receive('~STA#', 1025).lost, false);
+        same(second(0.6, full, 65).lost, true);
+        same(second(0.7, full, 65).lost, false);
+
+        const shortTable = [[0, 1], [5, 0.9], [10, 0.8], [15, 0.65], [20, 0.5], [25, 0.3], [30, 0.1], [35, 0.05], [40, 0], [41, 0], [500, 0]];
+        const fullTable = [[0, 1], [15, 1], [30, 1], [35, 0.95], [40, 0.9], [45, 0.9], [50, 0.9], [55, 0.85], [60, 0.8], [65, 0.65],
+            [70, 0.5], [75, 0.4], [80, 0.3], [85, 0.15], [90, 0], [91, 0], [500, 0]];
+        for (const [first, table] of [[short, shortTable], [full, fullTable]]) {
+            for (const [gap, probability] of table) {
+                same([gap, second(Math.max(0, probability - 0.001), first, gap).lost], [gap, probability > 0]);
+                if (probability < 1) same([gap, second(probability + 0.001, first, gap).lost], [gap, false]);
+            }
+        }
+
+        const lost = lossy(0);
+        lost.receive('~STA#', 1000);
+        const result = lost.receive('~LED11#', 1001);
+        same([result.lost, result.replies, lost.state.top], [true, [], OFF]);
+        same(typeof result.warning, 'string');
+        same(lost.receive('~LED11#', 1081).lost, false);
+        same(lost.state.top, TOP);
+
+        const first = lossy(0);
+        same(first.receive('~STA#', 1000).lost, false);
+        const off = new BoardModel({ random: () => 0 });
+        off.receive('~STA#', 1000);
+        same(off.receive('~STA#', 1000).lost, false);
+        same(off.receive('~STA#', 1001).replies, [sda(zeros(361))]);
+
+        const cycled = lossy(0);
+        cycled.receive('~STA#', 1000);
+        cycled.powerCycle(1001);
+        same(cycled.receive('~STA#', 17001).lost, false);
+
+        const ignoredMatrix = lossy(0);
+        ignoredMatrix.receive(matrix('SAU', { 5: '1' }), 1000);
+        same(ignoredMatrix.receive('~STA#', 1045).lost, false);
+        const malformed = lossy(0);
+        malformed.receive('~SAR1#', 1000);
+        same(malformed.receive('~STA#', 1045).lost, false);
+        const complete = lossy(0);
+        complete.receive(full, 1000);
+        same(complete.receive('~STA#', 1045).lost, true);
+    });
+
+    test('danger_codes_only_warn', () => {
+        const model = new BoardModel();
+        model.receive('~CTS1#', 0);
+        model.receive('~BOD13#', 100);
+        model.receive('~LED11#', 300);
+        model.setStone(100, 1, 1000);
+        const before = snapshot(model);
+        const frames = ['~UPD#', '~ADJ#', '~SEP32#', '~SEP15#', '~WBS5#', '~CRCYES#', '~CRCERR#', '~CRY#', '~CRE#'];
+        let at = 2000;
+        for (const frame of frames) {
+            at += 1000;
+            const result = model.receive(frame, at);
+            same([frame, result.replies, result.lost, result.ignored], [frame, [], false, false]);
+            same(typeof result.danger, 'string');
+            same(result.danger.includes('DANGER'), true);
+            same(result.danger.includes('3.8'), true);
+            same(snapshot(model), before);
+            same(model.tick(at + 5000), []);
+            same(model.tick(at + 100000), []);
+        }
+        same(model.receive('~GSV#', 200000).replies, ['~FJX0.32#']);
+        same(model.receive('~STA#', 201000).replies[0].length, 5 + 169);
+        for (const frame of ['~STA#', '~GSV#', '~GBS#', '~CAL#', '~XYZ#', '~CRC#', '~UDS1#', '~LED11#', '~SAU#']) {
+            at += 1000;
+            same([frame, model.receive(frame, at + 300000).danger], [frame, null]);
+        }
+        const long = model.receive(`~UPD${'1'.repeat(400)}#`, 400000);
+        same([long.replies, typeof long.danger], [[], 'string']);
+        const lossy = new BoardModel({ random: () => 0 });
+        lossy.options.frameLoss = true;
+        lossy.receive('~STA#', 0);
+        const dropped = lossy.receive('~ADJ#', 1);
+        same([dropped.lost, dropped.replies, typeof dropped.danger], [true, [], 'string']);
+        const early = new BoardModel();
+        early.receive('~STA#', 0);
+        const quick = early.receive('~UPD#', 10);
+        same([quick.replies, typeof quick.warning, typeof quick.danger], [[], 'string', 'string']);
+        same(new BoardModel().receive('~UPD#', 0).warning, null);
+    });
+
+    function runAll() {
+        const failures = [];
+        for (const { name, fn } of tests) {
+            try { fn(); } catch (error) { failures.push(`FAIL ${name}: ${error.message}`); }
+        }
+        const passed = tests.length - failures.length;
+        const head = failures.length === 0 ? `RESULT: PASS ${passed}/${tests.length}` : `RESULT: FAIL ${passed}/${tests.length}`;
+        return [head, ...failures].join('\n');
+    }
+
+    const resultEl = document.getElementById('result');
+    window.addEventListener('error', (event) => { resultEl.textContent = `RESULT: FAIL script error: ${event.message}`; });
+    try {
+        resultEl.textContent = runAll();
+    } catch (error) {
+        resultEl.textContent = `RESULT: FAIL harness error: ${error.message}`;
+    }
+</script>
+</body>
+</html>

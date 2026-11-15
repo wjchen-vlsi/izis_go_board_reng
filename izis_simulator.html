@@ -34,8 +34,7 @@
 
     #indicator-black, #indicator-white { position: absolute; width: 8px; height: 8px; border-radius: 50%; background-color: #555; left: 50%; transform: translateX(-50%); transition: 0.2s; }
     #indicator-black { top: 12px; } #indicator-white { bottom: 12px; }
-    .led-on-green { background-color: #0f0 !important; box-shadow: 0 0 12px #0f0; }
-    .led-on-white { background-color: #fff !important; box-shadow: 0 0 12px #fff; }
+    .indicator-lit { background-color: var(--indicator-color) !important; box-shadow: 0 0 12px var(--indicator-color); }
     .coord-label { position: absolute; color: #555; font-size: 13px; font-family: Arial, sans-serif; font-weight: bold; }
     
     #board-grid { position: relative; width: 608px; height: 608px; display: grid; grid-template-columns: repeat(19, 32px); grid-template-rows: repeat(19, 32px); }
@@ -66,11 +65,11 @@
     .hw-button:active { transform: translateY(2px); }
     #lcd-screen { width: 80px; height: 120px; background-color: #ecf0f1; border: 3px solid #000; font-size: 10px; padding: 4px; color: #111; text-align: center; }
 
-    #bottom-section { height: 32vh; min-height: 200px; display: flex; flex-direction: column; transition: height 0.3s ease, min-height 0.3s ease; }
+    #bottom-section { height: 38vh; min-height: 200px; flex-shrink: 0; display: flex; flex-direction: column; transition: height 0.3s ease, min-height 0.3s ease; }
     #bottom-section.collapsed { height: 35px !important; min-height: 35px !important; overflow: hidden; }
     #tty-console { background-color: #111; border-radius: 10px; display: flex; flex-direction: column; height: 100%; border: 1px solid #444; }
     
-    .tty-header { padding: 8px 12px; background: #333; font-weight: bold; font-size: 13px; display: flex; justify-content: space-between; align-items: center; border-radius: 10px 10px 0 0; }
+    .tty-header { padding: 8px 12px; background: #333; font-weight: bold; font-size: 13px; display: flex; justify-content: space-between; align-items: center; border-radius: 10px 10px 0 0; cursor: ns-resize; user-select: none; }
     .collapse-btn { background: #555; color: #fff; border: 1px solid #777; border-radius: 4px; padding: 2px 10px; cursor: pointer; font-size: 12px; }
     .collapse-btn:hover { background: #666; }
 
@@ -78,6 +77,7 @@
     .log-tx { color: #2ecc71; } .log-rx { color: #f39c12; }
     .log-help { color: #5bc0de; background: #1a2a3a; padding: 8px; border-left: 4px solid #5bc0de; margin: 5px 0; border-radius: 0 4px 4px 0; font-family: monospace; line-height: 1.4; white-space: pre; }
     .log-warn { color: #f1c40f; background: #332b00; padding: 6px; border-left: 4px solid #f1c40f; margin: 3px 0; border-radius: 0 4px 4px 0; font-size: 11px; }
+    .log-danger { color: #ff8a80; background: #3d0c0c; padding: 6px; border-left: 4px solid #e74c3c; margin: 3px 0; border-radius: 0 4px 4px 0; font-size: 12px; font-weight: bold; }
     .sda-collapsed { color: #888; cursor: pointer; text-decoration: underline; background: #222; padding: 0 4px; border-radius: 3px; font-size: 11px; }
     .sda-collapsed:hover { color: #ccc; }
     .sda-full { word-break: break-all; color: #2ecc71; cursor: pointer; }
@@ -117,12 +117,28 @@
             <button class="quick-btn" style="width:100%; margin-top:5px;" onclick="connectWS()">Connect</button>
             <div id="ws-status" style="color: #e74c3c; margin-top: 5px; text-align:center;">Offline</div>
         </div>
+        <div class="control-box">
+            <label>Board Restart &amp; Faults:</label>
+            <button class="quick-btn" style="width:100%; margin-top:5px; background:#c0392b; border-color:#e74c3c;" onclick="powerCycle()">Power cycle</button>
+            <label style="display:block; margin-top:8px; font-size:12px;">Calibration load (s):</label>
+            <input type="number" id="calibration-s" value="16" min="0" max="120" step="0.5">
+            <div id="fault-status" style="margin-top:5px; text-align:center; color:#2ecc71;">Ready</div>
+            <hr style="border-color:#555; margin:10px 0;">
+            <label style="font-size: 12px; cursor:pointer; display:flex; align-items:center; gap:5px;" title="A frame that arrives too soon after the previous one is lost, with the probabilities of specification section 3.1">
+                <input type="checkbox" id="fault-loss" onchange="model.options.frameLoss = this.checked" style="width:auto; margin:0;">
+                Lose frames sent too fast
+            </label>
+            <label style="font-size: 12px; cursor:pointer; display:flex; align-items:center; gap:5px; margin-top:6px;" title="The next ~SDA frame ends in ? instead of its last digit">
+                <input type="checkbox" id="fault-garble" onchange="model.options.garbleNext = this.checked" style="width:auto; margin:0;">
+                Garble the next report
+            </label>
+        </div>
     </div>
 
     <div id="izis-hardware-wrapper">
         <div id="izis-hardware">
-            <div id="indicator-black" title="Top Green Indicator"></div>
-            <div id="indicator-white" title="Bottom White Indicator"></div>
+            <div id="indicator-black" title="Top Indicator"></div>
+            <div id="indicator-white" title="Bottom Indicator"></div>
             <div id="coord-container" style="position: absolute; width: 100%; height: 100%; pointer-events: none;"></div>
             <div id="board-grid"></div>
         </div>
@@ -141,7 +157,7 @@
 
 <div id="bottom-section">
     <div id="tty-console">
-        <div class="tty-header">
+        <div class="tty-header" title="Drag up or down to resize the console">
             <span>Console</span>
             <button class="collapse-btn" onclick="toggleTTY()">Collapse / Expand ▼</button>
         </div>
@@ -157,25 +173,29 @@
                     <option value="~BOD19#">BOD19 (19x19)</option>
                     <option value="~BOD13#">BOD13 (13x13)</option>
                     <option value="~BOD09#">BOD09 (9x9)</option>
+                    <option value="~BOD15#">BOD15 (15x15)</option>
+                    <option value="~BSC13R005G026B004#">BSC13 (13x13, default frame colour)</option>
+                    <option value="~BSC09R255G000B000#">BSC09 (9x9, red frame)</option>
                 </optgroup>
                 <optgroup label="System & Sensor Setup">
                     <option value="~CTS1#">CTS1 (Enable Auto-Report)</option>
                     <option value="~CTS0#">CTS0 (Disable Auto-Report)</option>
                     <option value="~GVE#">GVE (Get HW Version)</option>
-                    <option value="~ADJ#">ADJ (Calibrate Sensors)</option>
                     <option value="~GSV#">GSV (Get Separator Setting)</option>
-                    <option value="~SEP32#">SEP32 (Set Separator 0.32)</option>
-                    <option value="~SEP15#">SEP15 (Set Separator 0.15)</option>
+                    <option value="~REQ#">REQ (Read Sensor Voltages)</option>
+                    <option value="~GBS#">GBS (Read Stored Byte)</option>
                 </optgroup>
                 <optgroup label="Hardware Indicators">
                     <option value="~LED11#">LED11 (Top Green ON)</option>
                     <option value="~LED21#">LED21 (Bottom White ON)</option>
                     <option value="~LED10#">LED10 (Both Indicators OFF)</option>
+                    <option value="~GLC1R255G000B000#">GLC1 (Top Indicator Red)</option>
+                    <option value="~GLC2R000G000B255#">GLC2 (Bottom Indicator Blue)</option>
                 </optgroup>
                 <optgroup label="Matrix & Advanced Lighting">
                     <option value="~RGF#">RGF (Clear LEDs, Preserve Boundary)</option>
                     <option value="~FLL#">FLL (Fill Dim White)</option>
-                    <option value="~SAR010203040506070809000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000#">SAR Palette Test (Row 1)</option>
+                    <option value="~SAR0102030405060708090000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000#">SAR Palette Test (Row 1)</option>
                     <option value="~TLO181,r000g255b000,1#">TLO (Single LED + Sync Top Indicator)</option>
                     <option value="~HOTA001r255g000b000B019r000g255b000C343r000g000b255D361r255g255b255N4#">HOT (Batch 4 LEDs Corners)</option>
                 </optgroup>
@@ -187,6 +207,15 @@
                 </optgroup>
             </select>
             <button class="quick-btn" onclick="applyTemplate()">Add to Input</button>
+
+            <div style="display: flex; align-items: center; gap: 5px;">
+                <label style="font-size:12px;">Top:</label>
+                <input type="color" id="glc-top" value="#ff0000" style="padding:0; border:none; width:25px; height:25px;">
+                <button class="quick-btn" onclick="sendGlc(1)">Send GLC1</button>
+                <label style="font-size:12px;">Bottom:</label>
+                <input type="color" id="glc-bottom" value="#0000ff" style="padding:0; border:none; width:25px; height:25px;">
+                <button class="quick-btn" onclick="sendGlc(2)">Send GLC2</button>
+            </div>
 
             <div style="display: flex; align-items: center; gap: 5px; margin-left: auto;">
                 <label style="font-size:12px;">Pos:</label>
@@ -202,47 +231,15 @@
     </div>
 </div>
 
+<script src="izis_board_model.js"></script>
 <script>
     const TOTAL_POINTS = 361;
-    let boardState = new Array(TOTAL_POINTS).fill(0); 
-    let autoReport = false;
-    let ws = null; 
-    let lastCmdTime = 0, lastCmdPrefix = '';
-    let sepSetting = '0.32'; 
-    let currentBoardSize = 19; 
+    const model = new BoardModel();
+    let ws = null;
+    let drawnSize = 0;
+    const stoneEls = [], ledEls = [];
 
     let placeMode = 'alt', nextStone = 1;     
-
-    // Empirical 5-Color Hardware Palette
-    const EMPIRICAL_PALETTE = {
-        '1': '#2ecc71', // Emerald Green
-        '2': '#ffffff', // Cool White
-        '3': '#2ecc71', // Green Group (Indistinguishable from #1)
-        '4': '#ffffff', // White Group (Indistinguishable from #2)
-        '5': '#e74c3c', // Pure Vibrant Red
-        '6': '#e056fd', // Magenta
-        '7': '#f5af82', // Peach / Salmon (~RGB 245, 175, 130)
-        '8': '#2ecc71', // Green Group (Indistinguishable from #1)
-        '9': '#ffffff'  // White Group (Indistinguishable from #2)
-    };
-
-    function logicalToPhysical(logIdx) {
-        if (currentBoardSize === 19) return logIdx;
-        const offset = Math.floor((19 - currentBoardSize) / 2); 
-        const r = Math.floor(logIdx / currentBoardSize);
-        const c = logIdx % currentBoardSize;
-        return (r + offset) * 19 + (c + offset);
-    }
-
-    function generateSDA() {
-        let sdaStr = '';
-        const limit = currentBoardSize * currentBoardSize;
-        for (let i = 0; i < limit; i++) {
-            const physIdx = logicalToPhysical(i);
-            sdaStr += boardState[physIdx];
-        }
-        return `~SDA${sdaStr}#`;
-    }
 
     function setMode(mode) {
         if (mode === 'alt' && placeMode === 'alt') nextStone = 3 - nextStone; 
@@ -260,9 +257,8 @@
     }
 
     function clearAllStones() {
-        boardState.fill(0);
-        for (let i = 0; i < TOTAL_POINTS; i++) updateStoneUI(i);
-        if (autoReport) sendHardwareData(generateSDA());
+        sendFrames(model.clearStones(Date.now()));
+        render();
     }
 
     function toggleIndices() { document.getElementById('board-grid').classList.toggle('show-indices', document.getElementById('cb-index').checked); }
@@ -275,6 +271,27 @@
     }
     window.addEventListener('resize', resizeBoard);
 
+    const bottomSection = document.getElementById('bottom-section');
+    document.querySelector('.tty-header').addEventListener('mousedown', (e) => {
+        if (e.target.closest('button') || bottomSection.classList.contains('collapsed')) return;
+        e.preventDefault();
+        const bottom = bottomSection.getBoundingClientRect().bottom;
+        bottomSection.style.transition = 'none';
+        const move = (ev) => {
+            const height = Math.min(Math.max(bottom - ev.clientY, 120), window.innerHeight * 0.75);
+            bottomSection.style.height = `${height}px`;
+            bottomSection.style.minHeight = '120px';
+            resizeBoard();
+        };
+        const up = () => {
+            document.removeEventListener('mousemove', move);
+            document.removeEventListener('mouseup', up);
+            bottomSection.style.transition = '';
+        };
+        document.addEventListener('mousemove', move);
+        document.addEventListener('mouseup', up);
+    });
+
     const AudioContext = window.AudioContext || window.webkitAudioContext;
     const audioCtx = new AudioContext();
     function playBeep() {
@@ -285,31 +302,16 @@
     }
     function playDoubleBeep() { playBeep(); setTimeout(playBeep, 150); }
 
-    const arrRLT = [61, 81, 101, 121, 129, 141, 147, 161, 165, 181, 183, 201];
-    const arrRLW = [82, 90, 102, 108, 122, 126, 142, 144, 162, 180, 182, 198, 202, 216, 222, 234, 242];
-    const arrRLO = [81, 85, 89, 90, 101, 104, 107, 110, 121, 123, 125, 130, 141, 142, 144, 149, 159, 161, 163, 168, 177, 180, 183, 186, 195, 199, 203, 204]; 
-
     const gridEl = document.getElementById('board-grid');
     const logEl = document.getElementById('tty-log');
     const inputEl = document.getElementById('tty-input');
     
     function updateBoardUI() {
-        const offset = Math.floor((19 - currentBoardSize) / 2);
-        for (let r = 0; r < 19; r++) {
-            for (let c = 0; c < 19; c++) {
-                const hwIndex = r * 19 + (18 - c);
-                const intersection = document.getElementById(`pt-${hwIndex}`);
-                if (r >= offset && r < offset + currentBoardSize && c >= offset && c < offset + currentBoardSize) {
-                    intersection.parentElement.classList.remove('inactive-area');
-                    const logR = r - offset;
-                    const logC = (currentBoardSize - 1) - (c - offset); 
-                    const logIndex = logR * currentBoardSize + logC + 1;
-                    intersection.querySelector('.pt-index').textContent = logIndex;
-                } else {
-                    intersection.parentElement.classList.add('inactive-area');
-                    intersection.querySelector('.pt-index').textContent = '';
-                }
-            }
+        for (let hwIndex = 0; hwIndex < 361; hwIndex++) {
+            const intersection = document.getElementById(`pt-${hwIndex}`);
+            const point = model.logicalOf(hwIndex);
+            intersection.parentElement.classList.toggle('inactive-area', point === null);
+            intersection.querySelector('.pt-index').textContent = point === null ? '' : point;
         }
     }
 
@@ -338,30 +340,61 @@
                 cell.addEventListener('mousedown', (e) => {
                     if (cell.classList.contains('inactive-area')) return;
                     e.preventDefault();
-                    if (e.button === 0) { 
-                        if (placeMode === 'alt') { boardState[hwIndex] = nextStone; nextStone = 3 - nextStone; updateModeUI(); } 
-                        else if (placeMode === 'blk') { boardState[hwIndex] = 1; } 
-                        else if (placeMode === 'wht') { boardState[hwIndex] = 2; }
-                    } else if (e.button === 2) { boardState[hwIndex] = 0; }
-                    
-                    updateStoneUI(hwIndex);
-                    if (autoReport) sendHardwareData(generateSDA());
+                    let color = model.state.stones[hwIndex];
+                    if (e.button === 0) {
+                        if (placeMode === 'alt') { color = nextStone; nextStone = 3 - nextStone; updateModeUI(); }
+                        else if (placeMode === 'blk') { color = 1; }
+                        else if (placeMode === 'wht') { color = 2; }
+                    } else if (e.button === 2) { color = 0; }
+                    sendFrames(model.setStone(hwIndex, color, Date.now()));
+                    render();
                 });
                 cell.addEventListener('contextmenu', e => e.preventDefault());
 
+                stoneEls[hwIndex] = stone; ledEls[hwIndex] = led;
                 intersection.appendChild(stone); intersection.appendChild(led); intersection.appendChild(ptIndex); 
                 cell.appendChild(intersection); gridEl.appendChild(cell);
             }
         }
-        updateBoardUI();
+        render();
         resizeBoard();
     }
 
-    function updateStoneUI(hwIndex) {
-        const stone = document.getElementById(`stone-${hwIndex}`);
-        stone.classList.remove('stone-black', 'stone-white');
-        if (boardState[hwIndex] === 1) stone.classList.add('stone-black');
-        if (boardState[hwIndex] === 2) stone.classList.add('stone-white');
+    function visibleColor(rgb) {
+        return `rgb(${rgb.map((v) => Math.round(255 * Math.sqrt(v / 255))).join(',')})`;
+    }
+
+    function drawLed(el, rgb) {
+        const lit = rgb.some((v) => v > 0);
+        el.classList.toggle('led-glow', lit);
+        if (lit) el.style.setProperty('--led-color', visibleColor(rgb));
+        else el.style.removeProperty('--led-color');
+    }
+
+    function indicatorColor(rgb) {
+        const peak = Math.max(...rgb);
+        const scale = peak < 230 ? 230 / peak : 1;
+        return `rgb(${rgb.map((v) => Math.min(255, Math.round(v * scale))).join(',')})`;
+    }
+
+    function drawIndicator(el, rgb) {
+        const lit = rgb.some((v) => v > 0);
+        el.classList.toggle('indicator-lit', lit);
+        if (lit) el.style.setProperty('--indicator-color', indicatorColor(rgb));
+        else el.style.removeProperty('--indicator-color');
+    }
+
+    function render() {
+        const state = model.state;
+        if (drawnSize !== state.size) { drawnSize = state.size; updateBoardUI(); drawCoordinates(); }
+        for (let i = 0; i < TOTAL_POINTS; i++) {
+            stoneEls[i].classList.toggle('stone-black', state.stones[i] === 1);
+            stoneEls[i].classList.toggle('stone-white', state.stones[i] === 2);
+            drawLed(ledEls[i], state.leds[i]);
+        }
+        drawIndicator(document.getElementById('indicator-black'), state.top);
+        drawIndicator(document.getElementById('indicator-white'), state.bottom);
+        document.getElementById('fault-garble').checked = model.options.garbleNext;
     }
 
     function drawCoordinates() {
@@ -372,15 +405,15 @@
         
         const colLabelsIntl = ['A','B','C','D','E','F','G','H','J','K','L','M','N','O','P','Q','R','S','T'];
         const colLabelsSgf = ['a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s'];
-        const rowLabelsIntl = Array.from({length: 19}, (_, i) => 19 - i);
+        const rowLabelsIntl = Array.from({length: model.state.size}, (_, i) => model.state.size - i);
         
-        const offset = Math.floor((19 - currentBoardSize) / 2);
-        const rows = mode === 'intl' ? rowLabelsIntl.slice(offset, offset + currentBoardSize) : colLabelsSgf.slice(0, currentBoardSize);
-        const cols = mode === 'intl' ? colLabelsIntl.slice(0, currentBoardSize) : colLabelsSgf.slice(0, currentBoardSize);
+        const origin = model.screenOrigin();
+        const rows = mode === 'intl' ? rowLabelsIntl : colLabelsSgf.slice(0, model.state.size);
+        const cols = mode === 'intl' ? colLabelsIntl.slice(0, model.state.size) : colLabelsSgf.slice(0, model.state.size);
         
-        for (let i = 0; i < currentBoardSize; i++) {
-            const offsetX = 40 + ((i + offset) * 32) + 16; 
-            const offsetY = 50 + ((i + offset) * 32) + 16;
+        for (let i = 0; i < model.state.size; i++) {
+            const offsetX = 40 + ((i + origin.column) * 32) + 16;
+            const offsetY = 50 + ((i + origin.row) * 32) + 16;
             addCoord(coordContainer, rows[i], 20, offsetY, false); 
             addCoord(coordContainer, rows[i], 608 + 40 + 20, offsetY, false);
             addCoord(coordContainer, cols[i], offsetX, 28, true); 
@@ -405,13 +438,15 @@
 ~CTS0#      : Disable auto-report (Returns ~UDS0#)
 ~GVE#       : Get FW version (Returns ~VER121#)
 ~GSV#       : Get separator config (Returns ~FJX0.32#)
-~SEP<xx>#   : Set separator config, e.g. ~SEP32# (Returns ~SSS#)
-~ADJ#       : Calibrate Hall sensors (Returns ~AEN# after 2s, hardware takes >30s)
+~REQ#       : Read the sensor voltage of all 361 points (Returns one ~DAT frame)
+~GBS#       : Read the stored byte (Returns ~BHZ255#)
 
 [Hardware Indicators & Warnings]
 ~LED11#     : Top Green ON, Bottom White OFF (Returns ~LOS#)
 ~LED21#     : Bottom White ON, Top Green OFF (Returns ~LOS#)
 ~LED10/20#  : Both Indicators OFF (Returns ~LOS#)
+~GLC1R<RRR>G<GGG>B<BBB># : Top indicator, any colour (Returns ~LOS#)
+~GLC2R<RRR>G<GGG>B<BBB># : Bottom indicator, any colour (Returns ~LOS#)
 ~AWO#       : Beep audio prompt (No ACK)
 
 [Full Matrix LED Rendering]
@@ -420,12 +455,23 @@
 ~FLL#       : Fill 19x19 with dim white (Requires 240ms delay, No ACK)
 ~SAR<361>#  : Full 9-Color Matrix Write (80ms pacing, returns ~ALS#)
 ~SA[L|M|W]# : Matrix Write (Colors 1 & 2 only, 80ms pacing, returns ~ALS#)
-~BOD<size># : Set board to 19/13/09 (Returns ~GBS<size>#)
+~BOD<nn>#   : Set board to 04-13, 15 or 19 (Returns ~GBS<nn>#; other values: 19x19, no reply)
+~BSC<nn>R<RRR>G<GGG>B<BBB># : Like ~BOD, with the frame in a given colour
 
 [Dynamic Coordinates & Single LED]
 ~SHP<pos>,r<R>g<G>b<B>,1# : Single LED light up (Returns ~HCS#)
 ~TLO<pos>,r<R>g<G>b<B>,<m>#: Single LED synced with indicators (Returns ~TLS#)
 ~HOTA<pos>r...B...C...D...N<c># : Batch up to 4 LEDs (Returns ~HSM#)
+
+[Not Simulated]
+~UPD#, ~ADJ#, ~SEP<nn>#, ~WBS<d>#, ~CRCYES#, ~CRCERR#, ~CRY#, ~CRE# change the real
+board permanently or belong to a firmware update: a red warning, no reply, no effect.
+
+[Restart & Faults] (side panel)
+Power cycle : size 19x19, auto-report on, every light off, stones kept; input is ignored
+              for the calibration load, then ~GBS19# and ~SDA...# are sent unasked.
+Lose frames : a frame sent too soon after the previous one is dropped (log: "lost").
+Garble      : the next ~SDA frame ends in "?" instead of its last digit.
 ===============================================================`;
         const line = document.createElement('div'); line.className = 'log-help'; line.textContent = helpText;
         logEl.appendChild(line); logEl.scrollTop = logEl.scrollHeight;
@@ -435,7 +481,7 @@
         const line = document.createElement('div'); line.className = type === 'rx' ? 'log-rx' : 'log-tx';
         const prefix = (type === 'rx' ? 'PC  > ' : 'BRD < ');
 
-        const sdaLen = currentBoardSize * currentBoardSize;
+        const sdaLen = model.state.size * model.state.size;
         if (msg.startsWith('~SDA') && msg.length >= sdaLen + 5) {
             const dataStr = msg.substring(4, 4 + sdaLen);
             line.innerHTML = `${prefix}~SDA<span class="sda-collapsed">[...${sdaLen} data points (Click to expand)...]</span><span class="sda-full" style="display:none;" title="Click to collapse">${dataStr}</span>#`;
@@ -452,165 +498,76 @@
         logEl.appendChild(line); logEl.scrollTop = logEl.scrollHeight;
     }
 
+    function logDanger(msg) {
+        const line = document.createElement('div'); line.className = 'log-danger'; line.textContent = msg;
+        logEl.appendChild(line); logEl.scrollTop = logEl.scrollHeight;
+    }
+
     function sendHardwareData(msg) { logTTY(msg, 'tx'); if(ws && ws.readyState === WebSocket.OPEN) ws.send(msg); }
 
-    function animateShape(arrIdx, colorHex) {
-        arrIdx.forEach(pos => {
-            const hwIndex = pos - 1; 
-            if(hwIndex >= 0 && hwIndex < TOTAL_POINTS) {
-                const led = document.getElementById(`led-${hwIndex}`);
-                if (led) { led.className = 'led'; led.classList.add('led-glow'); led.style.setProperty('--led-color', colorHex); }
-            }
+    const scheduledReplies = new Set();
+    let lastSendAt = 0;
+
+    function sendFrames(frames, delayMs = 0) {
+        frames.forEach((frame) => {
+            const now = Date.now();
+            const sendAt = Math.max(now + delayMs, lastSendAt);
+            lastSendAt = sendAt;
+            if (sendAt <= now) { sendHardwareData(frame); return; }
+            const id = setTimeout(() => { scheduledReplies.delete(id); sendHardwareData(frame); }, sendAt - now);
+            scheduledReplies.add(id);
         });
     }
 
-    function checkDelay(prefix) {
-        const now = Date.now();
-        if (lastCmdTime > 0) {
-            // Only RGC, RGF, FLL require the 240ms extended render delay
-            const requiredDelay = ['RGC', 'RGF', 'FLL'].includes(lastCmdPrefix) ? 240 : 80;
-            if (now - lastCmdTime < requiredDelay) {
-                logWarn(`⚠️ [Delay Warning] Only ${now - lastCmdTime}ms elapsed since last command (${lastCmdPrefix}). Expected >= ${requiredDelay}ms.`);
-            }
-        }
-        lastCmdTime = now; 
-        lastCmdPrefix = prefix;
+    function calibrationMs() {
+        const text = document.getElementById('calibration-s').value.trim();
+        const seconds = text === '' ? NaN : Number(text);
+        return Number.isFinite(seconds) && seconds >= 0 ? Math.round(seconds * 1000) : 16000;
     }
 
-    function handleDynamicSingleLED(logicalPosStr, r, g, b, isHOT = false) {
-        const logPos = parseInt(logicalPosStr, 10) - 1; 
-        const limit = currentBoardSize * currentBoardSize;
-        if (logPos >= 0 && logPos < limit) {
-            const physPos = logicalToPhysical(logPos);
-            const led = document.getElementById(`led-${physPos}`);
-            if (led) {
-                if (!isHOT) led.classList.add('shp-lit'); 
-                led.classList.add('led-glow');
-                led.style.setProperty('--led-color', `rgb(${parseInt(r,10)},${parseInt(g,10)},${parseInt(b,10)})`);
-            }
-        }
+    function powerCycle() {
+        scheduledReplies.forEach(clearTimeout);
+        scheduledReplies.clear();
+        lastSendAt = 0;
+        model.calibrationMs = calibrationMs();
+        logWarn(`Power cycle: the board ignores input for ${model.calibrationMs / 1000} s, then sends ~GBS19# and ~SDA...# unasked. The bridge stays connected.`);
+        sendFrames(model.powerCycle(Date.now()));
+        render();
+        updateFaultStatus();
     }
 
-    function processCommand(cmd) {
-        logTTY(cmd, 'rx');
-        const match = cmd.match(/^~?([A-Z]{3})([^~#]*)#?$/);
-        if (!match) return;
+    function updateFaultStatus() {
+        const left = model.readyAt - Date.now();
+        const el = document.getElementById('fault-status');
+        const text = left > 0 ? `Calibrating: input ignored, ${Math.ceil(left / 1000)} s left` : 'Ready';
+        if (el.textContent === text) return;
+        el.textContent = text;
+        el.style.color = left > 0 ? '#f1c40f' : '#2ecc71';
+    }
 
-        let prefix = match[1], payload = match[2];
-        checkDelay(prefix);
-
-        const indBlack = document.getElementById('indicator-black'), indWhite = document.getElementById('indicator-white');
-
-        if (prefix === 'STA') { sendHardwareData(generateSDA()); }
-        else if (prefix === 'GVE') { sendHardwareData('~VER121#'); }
-        else if (prefix === 'GSV') { sendHardwareData(`~FJX${sepSetting}#`); }
-        else if (prefix === 'SEP') { sepSetting = `0.${payload}`; sendHardwareData('~SSS#'); }
-        else if (prefix === 'ADJ') { setTimeout(() => sendHardwareData('~AEN#'), 2000); }
-        else if (prefix === 'CTS') { autoReport = (payload === '1'); sendHardwareData(`~UDS${payload}#`); }
-        else if (prefix === 'RGC') { document.querySelectorAll('.led').forEach(el => { el.className = 'led'; el.style.removeProperty('--led-color'); }); sendHardwareData('~ALC#'); }
-        else if (prefix === 'RGF') { document.querySelectorAll('.led:not(.bod-lit)').forEach(el => { el.className = 'led'; el.style.removeProperty('--led-color'); }); sendHardwareData('~SIC#'); }
-        else if (prefix === 'FLL') { document.querySelectorAll('.led').forEach(el => { el.className = 'led'; el.classList.add('led-glow'); el.style.setProperty('--led-color', '#888888'); }); }
-        else if (prefix === 'LED') {
-            if (payload === '11') { indBlack.classList.add('led-on-green'); indWhite.classList.remove('led-on-white'); }
-            if (payload === '21') { indWhite.classList.add('led-on-white'); indBlack.classList.remove('led-on-green'); }
-            if (payload === '10' || payload === '20') { indBlack.classList.remove('led-on-green'); indWhite.classList.remove('led-on-white'); }
-            sendHardwareData('~LOS#');
-        }
-        else if (prefix === 'SHP' || prefix === 'TLO') {
-            document.querySelectorAll('.shp-lit').forEach(el => { el.classList.remove('shp-lit', 'led-glow'); el.style.removeProperty('--led-color'); });
-            const parts = payload.split(',');
-            if (parts.length >= 2) {
-                const rgbMatch = parts[1].match(/r(\d{3})g(\d{3})b(\d{3})/);
-                if (rgbMatch) handleDynamicSingleLED(parts[0], rgbMatch[1], rgbMatch[2], rgbMatch[3]);
-                
-                if (prefix === 'TLO') {
-                    const mode = parts[2] ? parts[2] : '1'; 
-                    if (mode === '1') { indBlack.classList.add('led-on-green'); indWhite.classList.remove('led-on-white'); }
-                    else if (mode === '2') { indWhite.classList.add('led-on-white'); indBlack.classList.remove('led-on-green'); }
-                    else if (mode === '3') { indBlack.classList.add('led-on-green'); indWhite.classList.add('led-on-white'); }
-                    else if (mode === '0') { indBlack.classList.remove('led-on-green'); indWhite.classList.remove('led-on-white'); }
-                    sendHardwareData('~TLS#');
-                } else {
-                    sendHardwareData('~HCS#');
-                }
-            }
-        }
-        else if (prefix === 'HOT') {
-            const re = /^A(\d{3})r(\d{3})g(\d{3})b(\d{3})B(\d{3})r(\d{3})g(\d{3})b(\d{3})C(\d{3})r(\d{3})g(\d{3})b(\d{3})D(\d{3})r(\d{3})g(\d{3})b(\d{3})N([1-4])$/;
-            const m = payload.match(re);
-            if (m) {
-                for (let i = 0; i < parseInt(m[17], 10); i++) {
-                    handleDynamicSingleLED(m[1 + i*4], m[2 + i*4], m[3 + i*4], m[4 + i*4], true);
-                }
-                sendHardwareData('~HSM#');
-            }
-        }
-        else if (['SAR', 'SAL', 'SAM', 'SAW', 'SAU', 'SAN'].includes(prefix)) {
-            document.querySelectorAll('.led').forEach(el => { el.className = 'led'; });
-            const isSAR = (prefix === 'SAR');
-            
-            for (let i = 0; i < 361 && i < payload.length; i++) {
-                const colorIdx = payload[i];
-                if (colorIdx !== '0') {
-                    // Physical hardware constraint: SAL/SAM/SAW only render indices 1 & 2
-                    if (!isSAR && colorIdx !== '1' && colorIdx !== '2') {
-                        continue;
-                    }
-                    const colorHex = EMPIRICAL_PALETTE[colorIdx];
-                    if (colorHex) {
-                        const led = document.getElementById(`led-${i}`);
-                        if (led) { 
-                            led.classList.add('led-glow'); 
-                            led.style.setProperty('--led-color', colorHex); 
-                        }
-                    }
-                }
-            }
-            sendHardwareData('~ALS#');
-        }
-        else if (prefix === 'BOD') {
-            let bound = parseInt(payload, 10);
-            if ([9, 13, 19].includes(bound)) {
-                currentBoardSize = bound;
-                updateBoardUI(); drawCoordinates();
-                
-                document.querySelectorAll('.bod-lit').forEach(el => el.classList.remove('bod-lit', 'led-glow'));
-                if (bound === 9 || bound === 13) {
-                    let offset = Math.floor((19 - bound) / 2);
-                    for(let r=-1; r<=bound; r++) {
-                        for(let c=-1; c<=bound; c++) {
-                            if (r === -1 || r === bound || c === -1 || c === bound) {
-                                let phys = (r + offset) * 19 + (c + offset);
-                                let led = document.getElementById(`led-${phys}`);
-                                if(led) { led.classList.add('led-glow', 'bod-lit'); led.style.setProperty('--led-color', '#2ecc71'); }
-                            }
-                        }
-                    }
-                }
-                sendHardwareData(`~GBS${payload}#`); 
-            }
-        }
-        else if (prefix === 'AWO') { 
-            playDoubleBeep(); 
-            // AWO is fire-and-forget on physical hardware; no ACK is returned.
-        }
-        else if (prefix === 'AWT' || prefix === 'AWS') { /* Fire-and-forget */ }
-        else if (prefix === 'RLT') { animateShape(arrRLT, '#2ecc71'); sendHardwareData(`~DSC#`); }
-        else if (prefix === 'RLW') { animateShape(arrRLW, '#e74c3c'); sendHardwareData(`~DSC#`); }
-        else if (prefix === 'RLO') { animateShape(arrRLO, '#2ecc71'); sendHardwareData(`~DSC#`); }
+    function handleFrame(frame) {
+        logTTY(frame, 'rx');
+        const beepsBefore = model.state.beeps;
+        const result = model.receive(frame, Date.now());
+        if (result.danger) logDanger(result.danger);
+        if (result.ignored) logWarn('The board is calibrating: this frame is ignored.');
+        if (result.lost) logWarn('Frame lost: it arrived too soon after the previous one.');
+        if (result.warning) logWarn(result.warning);
+        if (model.state.beeps > beepsBefore) playDoubleBeep();
+        sendFrames(result.replies, model.latency(frame));
+        render();
     }
 
     function dispatchStream(streamData) {
-        // Unpacks single or multiple concatenated packets (~CMD1#~CMD2#)
         const regex = /~?[A-Z]{3}[^~#]*#/g;
         let match;
         let found = false;
         while ((match = regex.exec(streamData)) !== null) {
             found = true;
-            processCommand(match[0]);
+            handleFrame(match[0]);
         }
         if (!found && streamData.trim()) {
-            processCommand(streamData.trim());
+            handleFrame(streamData.trim());
         }
     }
 
@@ -622,7 +579,7 @@
     
     function sendColorCmd() {
         let posVal = parseInt(document.getElementById('led-pos').value, 10);
-        let maxPos = currentBoardSize * currentBoardSize;
+        let maxPos = model.state.size * model.state.size;
         if (isNaN(posVal) || posVal < 1 || posVal > maxPos) { alert(`For current board size, position must be between 1 and ${maxPos}.`); return; }
         
         const posStr = String(posVal).padStart(3, '0'); 
@@ -633,7 +590,13 @@
         insertCmd(`~SHP${posStr},r${r}g${g}b${b},1#`); sendInputCmd();
     }
 
-    function sendInputCmd() { 
+    function sendGlc(indicator) {
+        const hex = document.getElementById(indicator === 1 ? 'glc-top' : 'glc-bottom').value;
+        const channel = (from) => parseInt(hex.slice(from, from + 2), 16).toString().padStart(3, '0');
+        insertCmd(`~GLC${indicator}R${channel(1)}G${channel(3)}B${channel(5)}#`); sendInputCmd();
+    }
+
+    function sendInputCmd() {
         if(inputEl.value) { 
             dispatchStream(inputEl.value.trim()); 
             inputEl.value = ''; 
@@ -642,8 +605,8 @@
 
     const COMMANDS = [
         '~STA#', '~CTS1#', '~CTS0#', '~RGC#', '~RGF#', '~FLL#',
-        '~BOD19#', '~BOD13#', '~BOD09#', '~GVE#', '~GSV#', '~SEP32#', '~ADJ#',
-        '~LED11#', '~LED10#', '~LED21#', '~LED20#', 
+        '~BOD19#', '~BOD13#', '~BOD09#', '~GVE#', '~GSV#',
+        '~LED11#', '~LED10#', '~LED21#', '~LED20#', '~GLC1', '~GLC2', '~BSC', '~REQ#', '~GBS#',
         '~AWO#', '~AWS#', '~AWT#', '~RLW#', '~RLO#', '~RLT#', '~TLO', '~HOT', '~SAR'
     ];
     let tabMatches = [], tabIdx = -1;
@@ -666,14 +629,15 @@
         }
     });
 
-    const bindButton = (btnId, clickCmd, longCmd) => {
+    const bindButton = (btnId, button) => {
         const btn = document.getElementById(btnId);
-        let timer, isLong = false, isPressed = false;
-        btn.addEventListener('mousedown', () => { isPressed = true; isLong = false; timer = setTimeout(() => { isLong = true; }, 1000); });
-        btn.addEventListener('mouseup', () => { if (!isPressed) return; isPressed = false; clearTimeout(timer); sendHardwareData(isLong ? longCmd : clickCmd); });
-        btn.addEventListener('mouseleave', () => { isPressed = false; clearTimeout(timer); });
+        const release = () => sendFrames(model.buttonUp(button, Date.now()));
+        btn.addEventListener('mousedown', () => sendFrames(model.buttonDown(button, Date.now())));
+        btn.addEventListener('mouseup', release);
+        btn.addEventListener('mouseleave', release);
+        window.addEventListener('blur', release);
     };
-    bindButton('btn-top', '~BKY#', '~BTK#'); bindButton('btn-bottom', '~WKY#', '~WTK#');
+    bindButton('btn-top', 'top'); bindButton('btn-bottom', 'bottom');
 
     let wsBuffer = '';
     function connectWS() {
@@ -684,7 +648,7 @@
             const regex = /~?[A-Z]{3}[^~#]*#/g;
             let match;
             while ((match = regex.exec(wsBuffer)) !== null) {
-                processCommand(match[0]);
+                handleFrame(match[0]);
             }
             const lastHash = wsBuffer.lastIndexOf('#');
             if (lastHash !== -1) {
@@ -695,6 +659,11 @@
     }
 
     initBoard();
+    setInterval(() => {
+        const frames = model.tick(Date.now());
+        if (frames.length > 0) { sendFrames(frames); render(); }
+        updateFaultStatus();
+    }, 50);
 </script>
 </body>
 </html>
